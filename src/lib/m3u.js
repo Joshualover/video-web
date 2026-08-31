@@ -92,10 +92,14 @@ export function parseM3u(content) {
         const duration = Number.parseFloat(firstToken)
         const attrMap = parseAttributes(attrs)
         const displayName = cleanName(name || attrMap['tvg-name'] || attrMap.name)
+        // 此处只记录 EXTINF 自身的 group-title，不要合并 pendingGroup：
+        // 1) 若提前兜底成「未分类」，#EXTGRP 写在 #EXTINF 之后时分组会丢失；
+        // 2) 若提前合并 pendingGroup，该频道之后的 #EXTGRP 会被固化的旧分组覆盖。
+        // 分组最终在 URL 行统一合并（pending.group || pendingGroup）。
         pending = {
           duration: Number.isFinite(duration) ? duration : -1,
           name: displayName,
-          group: cleanName(attrMap['group-title'] || pendingGroup) || '未分类',
+          group: cleanName(attrMap['group-title']),
           tvgId: attrMap['tvg-id'] || '',
           logo: attrMap['tvg-logo'] || '',
           attrs: attrMap
@@ -123,8 +127,9 @@ export function parseM3u(content) {
       valid,
       status: 'idle'
     })
+    // 只清空当前 EXTINF 状态；pendingGroup 保留到下一个 #EXTGRP 覆盖，
+    // 这样同一分组下的多个 URL 都能正确归属。
     pending = null
-    pendingGroup = null
   }
 
   channels.forEach((channel, index) => {
