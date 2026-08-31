@@ -1,7 +1,7 @@
 import express from 'express'
 import path from 'node:path'
 import { existsSync } from 'node:fs'
-import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { readdir, readFile, stat, writeFile, mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import {
   proxyFetch,
@@ -147,6 +147,9 @@ if (existsSync(distDir)) {
     next()
   })
 }
+
+// data 目录被 .gitignore 忽略（不随代码部署），启动时自动创建
+await mkdir(DATA_DIR, { recursive: true })
 
 app.listen(PORT, () => {
   console.log(`[flow-player] API 代理已启动: http://localhost:${PORT}`)
