@@ -73,6 +73,58 @@ Express 会同时托管 `dist` 静态文件与 `/api/proxy` 接口，访问 http
 
 > 部署后前端为 Vercel CDN 静态托管，`/api/proxy` 由 Serverless Function 提供，无需自建服务器。
 
+## 1Panel 部署（自有服务器）
+
+项目后端为纯 Node.js（Express），**使用 1Panel 的 Node.js 运行环境即可**，无需 Docker、无需数据库。
+
+### 方式一：Node.js 运行环境（推荐）
+
+**1. 安装 Node 环境**
+
+1Panel → 运行环境 → Node.js → 安装 Node 20（18+ 均可）。
+
+**2. 获取源码并构建**
+
+服务器终端执行：
+
+```bash
+cd /opt
+git clone https://github.com/Joshualover/video-web.git
+cd video-web
+npm install
+npm run build   # 生成 dist 静态资源（server 会自动托管）
+```
+
+**3. 创建 Node 项目**
+
+1Panel → 网站 → Node 项目 → 创建：
+
+| 配置项 | 值 |
+| --- | --- |
+| 项目名称 | video-web |
+| 源码目录 | /opt/video-web |
+| 启动文件 | server/index.js |
+| Node 版本 | 20（已安装的版本） |
+| 端口 | 8787 |
+| 环境变量 | `PORT=8787`、`ALLOW_PRIVATE_NETWORK=true`、`ALLOW_INSECURE_TLS=true`（公网建议加 `PROXY_TOKEN=xxx`，并将 `ALLOW_PRIVATE_NETWORK` 改为 `false`） |
+
+**4. 绑定域名与 HTTPS**
+
+- 网站列表 → video-web → 域名：添加域名，1Panel 会自动反向代理到 `127.0.0.1:8787`
+- 证书：申请 Let's Encrypt 证书或导入自有证书，开启 HTTPS
+
+**5. 访问** `https://你的域名` 即可。升级时在服务器执行 `git pull && npm install && npm run build`，再到 1Panel 重启项目。
+
+> 进程守护：1Panel 自带守护，无需额外配置；若习惯 PM2，可引用仓库根目录的 `ecosystem.config.cjs`。
+
+### 方式二：Docker（可选）
+
+仓库已提供 `Dockerfile` 与 `docker-compose.yml`：
+
+1. 1Panel → 容器 → 编排 → 创建，选择 Git 仓库或上传源码目录（含 Dockerfile）
+2. 或服务器终端：`cd /opt/video-web && docker compose up -d --build`
+3. 端口映射 `8787:8787`，环境变量在 compose 中按需修改
+
 ## 目录结构
 
 ```text
@@ -81,6 +133,8 @@ server/proxy-core.js   代理核心逻辑（Express 与 Vercel Serverless 共用
 api/proxy.js           Vercel Serverless 代理接口
 api/health.js          Vercel 健康检查接口
 vercel.json            Vercel 构建与路由配置
+ecosystem.config.cjs   PM2 进程守护配置（可选）
+Dockerfile / docker-compose.yml   Docker 部署（可选）
 src/lib/m3u.js         m3u / m3u8 解析器
 src/lib/fetch.js       远程加载与代理降级
 src/lib/storage.js     localStorage 封装

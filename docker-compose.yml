@@ -1,0 +1,12 @@
+services:
+  flow-player:
+    build: .
+    container_name: flow-player
+    restart: always
+    ports:
+      - "8787:8787"
+    environment:
+      PORT: 8787
+      ALLOW_PRIVATE_NETWORK: "true"   # 公网部署建议改为 "false" 开启 SSRF 防护
+      ALLOW_INSECURE_TLS: "true"      # 跳过自签名证书校验
+      # PROXY_TOKEN: "your-secret-token"  # 可选：代理接口访问令牌
