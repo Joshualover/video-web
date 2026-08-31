@@ -176,6 +176,43 @@ export const useLibraryStore = defineStore('library', {
       useUiStore().toast('本地数据已全部清空')
     },
 
+    // 导出所有本地数据为 JSON 备份（用于跨设备迁移）
+    exportBackup() {
+      return {
+        version: 1,
+        exportedAt: Date.now(),
+        recents: this.recents,
+        favorites: this.favorites,
+        saved: this.saved
+      }
+    },
+
+    // 从 JSON 备份恢复数据（校验并清洗非法条目）
+    importBackup(data) {
+      const ui = useUiStore()
+      if (!data || data.version !== 1) {
+        ui.toast('备份文件格式无效', 'error')
+        return false
+      }
+      const clean = (arr) =>
+        Array.isArray(arr)
+          ? arr.filter((item) => item && typeof item.url === 'string' && item.url)
+          : []
+      this.recents = clean(data.recents).slice(0, 20)
+      this.favorites = clean(data.favorites).slice(0, 100)
+      this.saved = clean(data.saved).slice(0, 10)
+      if (!this.recents.length && !this.favorites.length && !this.saved.length) {
+        ui.toast('备份文件中没有可恢复的数据', 'warning')
+        return false
+      }
+      this.persistAll()
+      ui.toast(
+        `已恢复：收藏 ${this.favorites.length} · 列表 ${this.saved.length} · 最近 ${this.recents.length}`,
+        'success'
+      )
+      return true
+    },
+
     usageBytes() {
       return storageUsage()
     }

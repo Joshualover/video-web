@@ -4,12 +4,14 @@ import { useRouter } from 'vue-router'
 import {
   ArrowLeft,
   Database,
+  Download,
   Info,
   Play,
   Plus,
   RefreshCw,
   Save,
-  Trash2
+  Trash2,
+  Upload
 } from 'lucide-vue-next'
 import { usePlaylistStore } from '../stores/playlist'
 import { useLibraryStore } from '../stores/library'
@@ -66,6 +68,45 @@ async function refreshSaved(item) {
     libraryStore.updateSaved(item.id, {
       channelCount: playlistStore.playlist.channelCount
     })
+  }
+}
+
+const importInputRef = ref(null)
+
+function exportBackup() {
+  const data = libraryStore.exportBackup()
+  const stamp = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  const date = `${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}`
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: 'application/json'
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `flow-player-backup-${date}.json`
+  link.click()
+  URL.revokeObjectURL(url)
+  uiStore.toast('备份已导出，请把文件发送到手机后导入', 'success')
+}
+
+function openImportPicker() {
+  importInputRef.value?.click()
+}
+
+async function handleImportFile(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  if (file.size > 2 * 1024 * 1024) {
+    uiStore.toast('备份文件过大', 'warning')
+    return
+  }
+  try {
+    const data = JSON.parse(await file.text())
+    libraryStore.importBackup(data)
+  } catch {
+    uiStore.toast('无法解析备份文件，请确认是导出的 JSON', 'error')
   }
 }
 
@@ -207,6 +248,35 @@ function formatSize(value) {
           <button class="btn btn-danger" type="button" @click="libraryStore.clearAllData()">
             <Trash2 :size="15" /> 清空全部数据
           </button>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <div class="section-head">
+          <h2>数据备份与迁移</h2>
+          <span class="count-note">跨设备同步</span>
+        </div>
+        <div class="cache-actions">
+          <button class="btn btn-secondary" type="button" @click="exportBackup">
+            <Download :size="15" /> 导出备份
+          </button>
+          <button class="btn btn-secondary" type="button" @click="openImportPicker">
+            <Upload :size="15" /> 导入备份
+          </button>
+          <input
+            ref="importInputRef"
+            class="visually-hidden"
+            type="file"
+            accept=".json,application/json"
+            @change="handleImportFile"
+          />
+        </div>
+        <div class="about-card">
+          <Info :size="15" />
+          <span>
+            收藏、最近播放、已保存列表仅保存在当前浏览器（localStorage），不会自动跨设备同步。
+            换设备/换浏览器时：先在这台设备「导出备份」，把 JSON 文件发送到新设备，再点「导入备份」即可恢复。
+          </span>
         </div>
       </section>
 
