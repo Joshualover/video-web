@@ -55,10 +55,32 @@ npm start
 
 Express 会同时托管 `dist` 静态文件与 `/api/proxy` 接口，访问 http://localhost:8787 即可。
 
+## Vercel 一键部署
+
+项目已内置 `vercel.json` 与 `api/` 下的 Serverless Function，可直接部署到 Vercel：
+
+1. 点击下方按钮（需登录 Vercel 并授权 GitHub 仓库）：
+
+   [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FJoshualover%2Fvideo-web)
+
+2. 或在 Vercel 控制台 Import 该仓库：框架选 **Other**，构建命令 `npm run build`，输出目录 `dist`（`vercel.json` 已配置，通常无需手动改）。
+
+3. 需要时在项目 Settings → Environment Variables 中配置：
+   - `ALLOW_PRIVATE_NETWORK=false` — 公网部署建议开启 SSRF 防护（拒绝内网地址）
+   - `ALLOW_INSECURE_TLS=true` — 跳过自签名证书校验（默认已开启）
+   - `PROXY_TOKEN=your-secret` — 为代理接口设置访问令牌，防止被他人借用
+   - `VITE_PROXY_TOKEN=your-secret` — 构建时注入，前端通过代理加载时会自动携带令牌（需与 `PROXY_TOKEN` 一致）
+
+> 部署后前端为 Vercel CDN 静态托管，`/api/proxy` 由 Serverless Function 提供，无需自建服务器。
+
 ## 目录结构
 
 ```text
-server/index.js        Express CORS 代理（含 SSRF 防护）
+server/index.js        Express CORS 代理（含 SSRF 防护），本地生产运行
+server/proxy-core.js   代理核心逻辑（Express 与 Vercel Serverless 共用）
+api/proxy.js           Vercel Serverless 代理接口
+api/health.js          Vercel 健康检查接口
+vercel.json            Vercel 构建与路由配置
 src/lib/m3u.js         m3u / m3u8 解析器
 src/lib/fetch.js       远程加载与代理降级
 src/lib/storage.js     localStorage 封装
