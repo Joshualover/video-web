@@ -1,16 +1,18 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ArrowRight,
   Clock,
   FileUp,
   Flame,
+  FolderOpen,
   History,
   Link2,
   Pencil,
   Play,
   RefreshCw,
+  Server,
   Sparkles,
   Star,
   Trash2,
@@ -147,6 +149,39 @@ function formatTime(timestamp) {
 function truncateUrl(url, length = 44) {
   return url.length > length ? `${url.slice(0, length)}...` : url
 }
+
+function displayName(name) {
+  return name.replace(/\.(m3u|m3u8|txt)$/i, '') || name
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return '-'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function loadServer(file) {
+  const ok = await playlistStore.loadServerFile(file.name)
+  if (ok) {
+    router.push('/player')
+  } else {
+    uiStore.toast(playlistStore.loadError || '加载失败', 'error')
+  }
+}
+
+onMounted(async () => {
+  await playlistStore.fetchServerFiles()
+  const first = playlistStore.serverFiles[0]
+  if (!first) return
+  const current = playlistStore.playlist
+  const same =
+    current?.source === '服务器目录' && current.name === displayName(first.name)
+  if (!same) {
+    const ok = await playlistStore.loadServerFile(first.name)
+    if (ok) uiStore.toast(`已自动加载服务器列表：${displayName(first.name)}`)
+  }
+})
 </script>
 
 <template>
@@ -205,6 +240,46 @@ function truncateUrl(url, length = 44) {
       </div>
       <p v-if="errorMessage" class="load-error">{{ errorMessage }}</p>
       <p v-if="playlistStore.loading" class="load-progress">{{ playlistStore.loadStage }}</p>
+    </section>
+
+    <section class="server-section">
+      <div class="section-head">
+        <h2><Server :size="17" /> 服务器目录</h2>
+        <span class="count-note">{{ playlistStore.serverFiles.length }} 个文件</span>
+      </div>
+
+      <div v-if="playlistStore.serverFiles.length" class="saved-list">
+        <article
+          v-for="file in playlistStore.serverFiles"
+          :key="file.name"
+          class="saved-card"
+        >
+          <div class="saved-main">
+            <strong>{{ displayName(file.name) }}</strong>
+            <span class="saved-url">{{ file.name }}</span>
+          </div>
+          <div class="saved-meta">
+            <span>{{ formatBytes(file.size) }}</span>
+            <span>{{ formatTime(file.modifiedAt) }}</span>
+          </div>
+          <div class="saved-actions">
+            <button
+              class="btn btn-small btn-primary"
+              type="button"
+              :disabled="playlistStore.loading"
+              @click="loadServer(file)"
+            >
+              <Play :size="14" /> 加载
+            </button>
+          </div>
+        </article>
+      </div>
+
+      <div v-else class="empty-block">
+        <FolderOpen :size="22" />
+        <span v-if="playlistStore.serverFilesLoading">正在读取服务器目录...</span>
+        <span v-else>服务器 data 目录暂无 m3u 文件，可在设置页上传。</span>
+      </div>
     </section>
 
     <section class="home-grid">

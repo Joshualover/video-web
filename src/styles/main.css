@@ -479,6 +479,9 @@ input::placeholder {
 .section-head h2 {
   margin: 0;
   font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .section-head.spaced {
@@ -1472,6 +1475,22 @@ input::placeholder {
 .add-saved-form input {
   flex: 1;
   min-width: 0;
+}
+
+.upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.upload-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.server-section {
+  margin-top: 26px;
 }
 
 .saved-admin-list {

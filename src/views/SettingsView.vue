@@ -72,6 +72,7 @@ async function refreshSaved(item) {
 }
 
 const importInputRef = ref(null)
+const serverUploadRef = ref(null)
 
 function exportBackup() {
   const data = libraryStore.exportBackup()
@@ -113,6 +114,30 @@ async function handleImportFile(event) {
 function formatSize(value) {
   return `${Math.round(value * 100)}%`
 }
+
+function openServerUpload() {
+  serverUploadRef.value?.click()
+}
+
+async function handleServerUpload(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  if (file.size > 10 * 1024 * 1024) {
+    uiStore.toast('文件超过 10MB 限制', 'warning')
+    return
+  }
+  if (!/\.(m3u|m3u8|txt)$/i.test(file.name)) {
+    uiStore.toast('仅支持 .m3u / .m3u8 / .txt 文件', 'warning')
+    return
+  }
+  const ok = await playlistStore.uploadServerFile(file)
+  if (ok) {
+    uiStore.toast(`已上传到服务器目录：${file.name}`, 'success')
+  } else {
+    uiStore.toast(playlistStore.loadError || '上传失败', 'error')
+  }
+}
 </script>
 
 <template>
@@ -151,6 +176,23 @@ function formatSize(value) {
             <Plus :size="16" /> {{ saving ? '验证中...' : '保存' }}
           </button>
         </form>
+        <div class="upload-row">
+          <button
+            class="btn btn-secondary"
+            type="button"
+            @click="openServerUpload"
+          >
+            <Upload :size="15" /> 上传 m3u 文件到服务器目录
+          </button>
+          <input
+            ref="serverUploadRef"
+            class="visually-hidden"
+            type="file"
+            accept=".m3u,.m3u8,.txt,application/x-mpegurl,audio/x-mpegurl,text/plain"
+            @change="handleServerUpload"
+          />
+          <span class="upload-hint">上传后会在首页「服务器目录」中自动出现，可切换加载</span>
+        </div>
         <p v-if="formError" class="load-error">{{ formError }}</p>
 
         <div v-if="libraryStore.saved.length" class="saved-admin-list">

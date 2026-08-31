@@ -10,7 +10,7 @@ export const usePlayerStore = defineStore('player', {
       volume: typeof prefs.volume === 'number' ? prefs.volume : 0.8,
       muted: Boolean(prefs.muted),
       playbackRate: typeof prefs.playbackRate === 'number' ? prefs.playbackRate : 1,
-      autoplay: prefs.autoplay !== false,
+      autoplay: prefs.autoplay === true,
       currentChannel: null,
       loading: false,
       buffering: false,

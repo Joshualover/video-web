@@ -21,7 +21,9 @@ export const usePlaylistStore = defineStore('playlist', {
     activeChannelId: null,
     loading: false,
     loadError: null,
-    loadStage: ''
+    loadStage: '',
+    serverFiles: [],
+    serverFilesLoading: false
   }),
 
   getters: {
@@ -127,6 +129,73 @@ export const usePlaylistStore = defineStore('playlist', {
         rawContent: parsed.rawContent
       })
       return true
+    },
+
+    async loadServerFile(name) {
+      this.loading = true
+      this.loadError = null
+      this.loadStage = '正在读取服务器列表...'
+      try {
+        const response = await fetch(`/api/playlists/content?name=${encodeURIComponent(name)}`)
+        if (!response.ok) throw new Error('读取服务器文件失败')
+        const text = await response.text()
+        this.loadStage = '正在解析频道列表...'
+        const parsed = parseM3u(text)
+        if (!parsed.channels.length) {
+          this.loadError = '无法识别的播放列表格式'
+          return false
+        }
+        this.applyPlaylist({
+          name: name.replace(/\.(m3u|m3u8|txt)$/i, '') || name,
+          sourceUrl: '',
+          source: '服务器目录',
+          channels: parsed.channels,
+          groups: parsed.groups,
+          rawContent: parsed.rawContent
+        })
+        return true
+      } catch (error) {
+        this.loadError = error.message || '加载失败，请稍后重试'
+        return false
+      } finally {
+        this.loading = false
+        this.loadStage = ''
+      }
+    },
+
+    async fetchServerFiles() {
+      this.serverFilesLoading = true
+      try {
+        const response = await fetch('/api/playlists')
+        if (!response.ok) throw new Error('接口不可用')
+        const data = await response.json()
+        this.serverFiles = Array.isArray(data.files) ? data.files : []
+      } catch {
+        this.serverFiles = []
+      } finally {
+        this.serverFilesLoading = false
+      }
+    },
+
+    async uploadServerFile(file) {
+      if (!file) return false
+      const name = file.name.replace(/\s+/g, '_')
+      try {
+        const response = await fetch(`/api/playlists?name=${encodeURIComponent(name)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: await file.text()
+        })
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}))
+          throw new Error(data.error || '上传失败')
+        }
+        await this.fetchServerFiles()
+        return true
+      } catch (error) {
+        this.loadError = error.message || '上传失败'
+        return false
+      }
     },
 
     loadSample() {
