@@ -6,6 +6,8 @@ import {
   Database,
   Download,
   Info,
+  KeyRound,
+  LogOut,
   Play,
   Plus,
   RefreshCw,
@@ -17,6 +19,7 @@ import { usePlaylistStore } from '../stores/playlist'
 import { useLibraryStore } from '../stores/library'
 import { usePlayerStore } from '../stores/player'
 import { useUiStore } from '../stores/ui'
+import { useAuthStore } from '../stores/auth'
 import { isValidStreamUrl } from '../lib/m3u'
 
 const router = useRouter()
@@ -24,6 +27,7 @@ const playlistStore = usePlaylistStore()
 const libraryStore = useLibraryStore()
 const playerStore = usePlayerStore()
 const uiStore = useUiStore()
+const authStore = useAuthStore()
 
 const newPlaylist = reactive({ name: '', url: '' })
 const saving = ref(false)
@@ -113,6 +117,44 @@ async function handleImportFile(event) {
 
 function formatSize(value) {
   return `${Math.round(value * 100)}%`
+}
+
+// ---- 账号与安全 ----
+const passForm = reactive({ oldPass: '', newPass: '', confirm: '' })
+const passError = ref('')
+const passOk = ref('')
+
+function changePassword() {
+  passError.value = ''
+  passOk.value = ''
+  const { oldPass, newPass, confirm } = passForm
+  if (!oldPass || !newPass || !confirm) {
+    passError.value = '请填写完整'
+    return
+  }
+  if (newPass.length < 4) {
+    passError.value = '新密码至少 4 位'
+    return
+  }
+  if (newPass !== confirm) {
+    passError.value = '两次输入的新密码不一致'
+    return
+  }
+  if (authStore.changePassword(oldPass, newPass)) {
+    passForm.oldPass = ''
+    passForm.newPass = ''
+    passForm.confirm = ''
+    passOk.value = '密码修改成功'
+    uiStore.toast('密码已修改', 'success')
+  } else {
+    passError.value = '原密码错误'
+  }
+}
+
+function logout() {
+  authStore.logout()
+  uiStore.toast('已退出登录')
+  router.push('/login')
 }
 
 function openServerUpload() {
@@ -289,6 +331,46 @@ async function handleServerUpload(event) {
           </button>
           <button class="btn btn-danger" type="button" @click="libraryStore.clearAllData()">
             <Trash2 :size="15" /> 清空全部数据
+          </button>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <div class="section-head">
+          <h2>账号与安全</h2>
+          <span class="count-note">当前账号：{{ authStore.username }}</span>
+        </div>
+        <form class="add-saved-form pass-form" @submit.prevent="changePassword">
+          <input
+            v-model="passForm.oldPass"
+            type="password"
+            placeholder="原密码"
+            autocomplete="current-password"
+            aria-label="原密码"
+          />
+          <input
+            v-model="passForm.newPass"
+            type="password"
+            placeholder="新密码（至少 4 位）"
+            autocomplete="new-password"
+            aria-label="新密码"
+          />
+          <input
+            v-model="passForm.confirm"
+            type="password"
+            placeholder="确认新密码"
+            autocomplete="new-password"
+            aria-label="确认新密码"
+          />
+          <button class="btn btn-primary" type="submit">
+            <KeyRound :size="16" /> 修改密码
+          </button>
+        </form>
+        <p v-if="passError" class="load-error">{{ passError }}</p>
+        <p v-if="passOk" class="load-success">{{ passOk }}</p>
+        <div class="cache-actions">
+          <button class="btn btn-secondary" type="button" @click="logout">
+            <LogOut :size="15" /> 退出登录
           </button>
         </div>
       </section>

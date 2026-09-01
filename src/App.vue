@@ -1,12 +1,16 @@
 <script setup>
-import { onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import TopBar from './components/TopBar.vue'
 import ToastContainer from './components/ToastContainer.vue'
 import { usePlayerStore } from './stores/player'
 import { useUiStore } from './stores/ui'
 
+const route = useRoute()
 const playerStore = usePlayerStore()
 const uiStore = useUiStore()
+
+const isLoginPage = computed(() => route.path === '/login')
 
 function handleOffline() {
   playerStore.setNetwork(true)
@@ -18,6 +22,7 @@ function handleOnline() {
 }
 
 onMounted(() => {
+  uiStore.initTheme()
   window.addEventListener('offline', handleOffline)
   window.addEventListener('online', handleOnline)
 })
@@ -30,8 +35,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-shell">
-    <TopBar />
-    <main class="app-main">
+    <TopBar v-if="!isLoginPage" />
+    <main class="app-main" :class="{ 'app-main-login': isLoginPage }">
       <router-view />
     </main>
     <ToastContainer />

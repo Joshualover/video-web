@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ArrowRight,
-  Clock,
   FileUp,
   Flame,
   FolderOpen,
@@ -102,42 +101,6 @@ async function refreshSaved(item) {
   if (ok) {
     libraryStore.updateSaved(item.id, { channelCount: playlistStore.playlist.channelCount })
   }
-}
-
-function playRecent(item) {
-  playlistStore.playSingle(
-    {
-      id: 'single-recent',
-      name: item.name,
-      url: item.url,
-      logo: item.logo,
-      group: item.group || '未分类',
-      valid: true,
-      status: 'idle',
-      duration: -1
-    },
-    item.sourceName || '最近播放',
-    item.sourceUrl
-  )
-  router.push('/player')
-}
-
-function playFavorite(item) {
-  playlistStore.playSingle(
-    {
-      id: 'single-favorite',
-      name: item.name,
-      url: item.url,
-      logo: item.logo,
-      group: item.group || '未分类',
-      valid: true,
-      status: 'idle',
-      duration: -1
-    },
-    item.sourceName || '收藏',
-    item.sourceUrl
-  )
-  router.push('/player')
 }
 
 function formatTime(timestamp) {
@@ -282,126 +245,68 @@ onMounted(async () => {
       </div>
     </section>
 
-    <section class="home-grid">
-      <div class="home-col">
-        <div class="section-head">
-          <h2>已保存播放列表</h2>
-          <router-link to="/settings" class="text-link">管理 <ArrowRight :size="14" /></router-link>
-        </div>
-
-        <div v-if="libraryStore.saved.length" class="saved-list">
-          <article v-for="item in libraryStore.saved" :key="item.id" class="saved-card">
-            <div class="saved-main">
-              <input
-                v-if="editingSavedId === item.id"
-                v-model="editingName"
-                class="inline-input"
-                type="text"
-                aria-label="播放列表名称"
-              />
-              <strong v-else>{{ item.name }}</strong>
-              <span class="saved-url" :title="item.url">{{ truncateUrl(item.url) }}</span>
-            </div>
-            <div class="saved-meta">
-              <span>{{ item.channelCount ?? '-' }} 频道</span>
-              <span>{{ formatTime(item.updatedAt) }}</span>
-            </div>
-            <div class="saved-actions">
-              <button class="btn btn-small btn-primary" type="button" @click="loadSaved(item)">
-                <Play :size="14" /> 加载
-              </button>
-              <button
-                v-if="editingSavedId === item.id"
-                class="btn btn-small btn-secondary"
-                type="button"
-                @click="saveEdit(item)"
-              >
-                保存
-              </button>
-              <button
-                v-else
-                class="icon-btn"
-                type="button"
-                title="重命名"
-                @click="startEdit(item)"
-              >
-                <Pencil :size="15" />
-              </button>
-              <button class="icon-btn" type="button" title="刷新" @click="refreshSaved(item)">
-                <RefreshCw :size="15" />
-              </button>
-              <button
-                class="icon-btn danger"
-                type="button"
-                title="删除"
-                @click="libraryStore.removeSaved(item.id)"
-              >
-                <Trash2 :size="15" />
-              </button>
-            </div>
-          </article>
-        </div>
-
-        <div v-else class="empty-block">
-          <Link2 :size="22" />
-          <span>还没有保存的播放列表，加载后可在设置页保存。</span>
-        </div>
+    <section class="home-col">
+      <div class="section-head">
+        <h2>已保存播放列表</h2>
+        <router-link to="/settings" class="text-link">管理 <ArrowRight :size="14" /></router-link>
       </div>
 
-      <div class="home-col">
-        <div class="section-head">
-          <h2>最近播放</h2>
-          <router-link to="/favorites" class="text-link">收藏页 <ArrowRight :size="14" /></router-link>
-        </div>
-        <div v-if="libraryStore.recents.length" class="recent-list">
-          <button
-            v-for="item in libraryStore.recents.slice(0, 8)"
-            :key="item.id"
-            class="recent-row"
-            type="button"
-            @click="playRecent(item)"
-          >
-            <span class="channel-logo small">
-              <span class="channel-logo-fallback">{{ item.name.slice(0, 1) }}</span>
-            </span>
-            <span class="recent-text">
-              <strong>{{ item.name }}</strong>
-              <span>{{ item.sourceName }} · {{ formatTime(item.playedAt) }}</span>
-            </span>
-            <Play :size="16" class="recent-play" />
-          </button>
-        </div>
-        <div v-else class="empty-block">
-          <Clock :size="22" />
-          <span>播放过的频道会出现在这里，最多保留 20 条。</span>
-        </div>
+      <div v-if="libraryStore.saved.length" class="saved-list">
+        <article v-for="item in libraryStore.saved" :key="item.id" class="saved-card">
+          <div class="saved-main">
+            <input
+              v-if="editingSavedId === item.id"
+              v-model="editingName"
+              class="inline-input"
+              type="text"
+              aria-label="播放列表名称"
+            />
+            <strong v-else>{{ item.name }}</strong>
+            <span class="saved-url" :title="item.url">{{ truncateUrl(item.url) }}</span>
+          </div>
+          <div class="saved-meta">
+            <span>{{ item.channelCount ?? '-' }} 频道</span>
+            <span>{{ formatTime(item.updatedAt) }}</span>
+          </div>
+          <div class="saved-actions">
+            <button class="btn btn-small btn-primary" type="button" @click="loadSaved(item)">
+              <Play :size="14" /> 加载
+            </button>
+            <button
+              v-if="editingSavedId === item.id"
+              class="btn btn-small btn-secondary"
+              type="button"
+              @click="saveEdit(item)"
+            >
+              保存
+            </button>
+            <button
+              v-else
+              class="icon-btn"
+              type="button"
+              title="重命名"
+              @click="startEdit(item)"
+            >
+              <Pencil :size="15" />
+            </button>
+            <button class="icon-btn" type="button" title="刷新" @click="refreshSaved(item)">
+              <RefreshCw :size="15" />
+            </button>
+            <button
+              class="icon-btn danger"
+              type="button"
+              title="删除"
+              @click="libraryStore.removeSaved(item.id)"
+            >
+              <Trash2 :size="15" />
+            </button>
+          </div>
+        </article>
+      </div>
 
-        <div class="section-head spaced">
-          <h2>收藏预览</h2>
-          <span v-if="libraryStore.favoriteCount" class="count-note">{{ libraryStore.favoriteCount }} / 100</span>
-        </div>
-        <div v-if="libraryStore.favorites.length" class="fav-list">
-          <button
-            v-for="item in libraryStore.favorites.slice(0, 4)"
-            :key="item.id"
-            class="recent-row"
-            type="button"
-            @click="playFavorite(item)"
-          >
-            <span class="channel-logo small">
-              <span class="channel-logo-fallback">{{ item.name.slice(0, 1) }}</span>
-            </span>
-            <span class="recent-text">
-              <strong>{{ item.name }}</strong>
-              <span>{{ item.group }} · {{ item.sourceName }}</span>
-            </span>
-            <Star :size="15" class="fav-star" :fill="'currentColor'" />
-          </button>
-        </div>
-        <div v-else class="empty-block">
-          <Star :size="22" />
-          <span>在频道列表中点击心形即可收藏。</span>
-        </div>
+      <div v-else class="empty-block">
+        <Link2 :size="22" />
+        <span>还没有保存的播放列表，加载后可在设置页保存。</span>
       </div>
     </section>
 
