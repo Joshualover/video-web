@@ -3,6 +3,7 @@ import { loadJson, saveJson } from '../lib/storage'
 
 const THEME_KEY = 'theme'
 const CHANNEL_VIEW_KEY = 'channelView'
+const CARD_SIZE_KEY = 'cardSize'
 let toastSeq = 0
 
 function applyTheme(theme) {
@@ -19,7 +20,11 @@ export const useUiStore = defineStore('ui', {
   state: () => ({
     toasts: [],
     theme: loadJson(THEME_KEY, '') || detectSystemTheme(),
-    channelView: loadJson(CHANNEL_VIEW_KEY, 'list') === 'grid' ? 'grid' : 'list'
+    channelView: loadJson(CHANNEL_VIEW_KEY, 'list') === 'grid' ? 'grid' : 'list',
+    channelCardSize: (() => {
+      const size = loadJson(CARD_SIZE_KEY, 'md')
+      return ['sm', 'md', 'lg'].includes(size) ? size : 'md'
+    })()
   }),
   actions: {
     initTheme() {
@@ -36,6 +41,10 @@ export const useUiStore = defineStore('ui', {
     setChannelView(view) {
       this.channelView = view === 'grid' ? 'grid' : 'list'
       saveJson(CHANNEL_VIEW_KEY, this.channelView)
+    },
+    setChannelCardSize(size) {
+      this.channelCardSize = ['sm', 'md', 'lg'].includes(size) ? size : 'md'
+      saveJson(CARD_SIZE_KEY, this.channelCardSize)
     },
     toast(message, type = 'info') {
       toastSeq += 1

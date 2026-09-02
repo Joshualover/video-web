@@ -33,6 +33,7 @@ const uiStore = useUiStore()
 const playerRef = ref(null)
 let player = null
 let retried = false
+let forcePlay = false // 连播切换频道时需要自动播放（autoplay 关闭时也生效）
 let loadStartedAt = 0
 const longLoading = ref(false)
 let longLoadingTimer = null
@@ -85,6 +86,18 @@ function initPlayer() {
   player.on('playing', handlePlaying)
   player.on('canplay', handleReady)
   player.on('error', handleError)
+  player.on('ended', handleEnded)
+}
+
+// 连播：点播播放结束后自动切换列表中的下一个频道
+function handleEnded() {
+  if (playerStore.isLive || !playerStore.autoNext) return
+  if (!props.channel || !props.playlist) return
+  const list = (props.playlist.channels || []).filter((channel) => channel.valid)
+  const index = list.findIndex((channel) => channel.id === props.channel.id)
+  if (index < 0 || index >= list.length - 1) return
+  forcePlay = true
+  playlistStore.setActiveChannel(list[index + 1].id)
 }
 
 function loadChannel(channel, resetRetry = true) {
@@ -99,7 +112,10 @@ function loadChannel(channel, resetRetry = true) {
   if (!playerStore.isLive) {
     player.playbackRate(playerStore.playbackRate)
   }
-  if (playerStore.autoplay) {
+  // 连播切换（forcePlay）时即使 autoplay 关闭也要自动播放
+  const shouldAutoPlay = playerStore.autoplay || forcePlay
+  forcePlay = false
+  if (shouldAutoPlay) {
     player.play().catch(() => {})
   }
 }

@@ -7,6 +7,8 @@ import {
   Download,
   Info,
   KeyRound,
+  LayoutGrid,
+  LayoutList,
   LogOut,
   Play,
   Plus,
@@ -312,6 +314,71 @@ async function handleServerUpload(event) {
           />
           <i class="switch"></i>
         </label>
+        <label class="switch-row">
+          <span>自动连播（点播结束后自动播放下一频道）</span>
+          <input
+            type="checkbox"
+            :checked="playerStore.autoNext"
+            @change="playerStore.setPrefs({ autoNext: $event.target.checked })"
+          />
+          <i class="switch"></i>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <div class="section-head">
+          <h2>显示设置</h2>
+        </div>
+        <div class="pref-row">
+          <label>频道默认视图</label>
+          <div class="seg-group">
+            <button
+              class="seg-btn"
+              :class="{ active: uiStore.channelView === 'list' }"
+              type="button"
+              @click="uiStore.setChannelView('list')"
+            >
+              <LayoutList :size="15" /> 列表
+            </button>
+            <button
+              class="seg-btn"
+              :class="{ active: uiStore.channelView === 'grid' }"
+              type="button"
+              @click="uiStore.setChannelView('grid')"
+            >
+              <LayoutGrid :size="15" /> 方块
+            </button>
+          </div>
+        </div>
+        <div class="pref-row">
+          <label>方块卡片大小</label>
+          <div class="seg-group">
+            <button
+              class="seg-btn"
+              :class="{ active: uiStore.channelCardSize === 'sm' }"
+              type="button"
+              @click="uiStore.setChannelCardSize('sm')"
+            >
+              小
+            </button>
+            <button
+              class="seg-btn"
+              :class="{ active: uiStore.channelCardSize === 'md' }"
+              type="button"
+              @click="uiStore.setChannelCardSize('md')"
+            >
+              中
+            </button>
+            <button
+              class="seg-btn"
+              :class="{ active: uiStore.channelCardSize === 'lg' }"
+              type="button"
+              @click="uiStore.setChannelCardSize('lg')"
+            >
+              大
+            </button>
+          </div>
+        </div>
       </section>
 
       <section class="settings-section">

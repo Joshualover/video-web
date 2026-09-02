@@ -11,6 +11,7 @@ export const usePlayerStore = defineStore('player', {
       muted: Boolean(prefs.muted),
       playbackRate: typeof prefs.playbackRate === 'number' ? prefs.playbackRate : 1,
       autoplay: prefs.autoplay === true,
+      autoNext: prefs.autoNext !== false,
       currentChannel: null,
       loading: false,
       buffering: false,
@@ -28,7 +29,8 @@ export const usePlayerStore = defineStore('player', {
         volume: this.volume,
         muted: this.muted,
         playbackRate: this.playbackRate,
-        autoplay: this.autoplay
+        autoplay: this.autoplay,
+        autoNext: this.autoNext
       })
     },
     setPrefs(partial) {
