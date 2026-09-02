@@ -74,6 +74,23 @@ function updateViewport() {
   viewportHeight.value = containerRef.value.clientHeight || 600
 }
 
+// 方块视图：让缩略图高度 = 当前列宽，保持正方形
+function syncThumbSize() {
+  if (!isGrid.value || !containerRef.value) return
+  const gridEl = containerRef.value.querySelector('.channel-grid')
+  if (!gridEl) return
+  const first = getComputedStyle(gridEl).gridTemplateColumns.split(' ')[0]
+  const width = Number.parseFloat(first)
+  if (width > 0) {
+    gridEl.style.setProperty('--thumb-h', `${Math.floor(width)}px`)
+  }
+}
+
+function onResize() {
+  updateViewport()
+  nextTick(syncThumbSize)
+}
+
 // ---- 通用 ----
 function logoFailed(channel) {
   brokenLogos.add(channel.id)
@@ -141,24 +158,33 @@ watch(
   }
 )
 
+// 视图/卡片大小变化时重新同步缩略图高度
+watch([() => isGrid.value, () => uiStore.channelCardSize], () => {
+  nextTick(syncThumbSize)
+})
+
 onMounted(() => {
   updateViewport()
-  window.addEventListener('resize', updateViewport)
+  window.addEventListener('resize', onResize)
+  nextTick(syncThumbSize)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', updateViewport)
+  window.removeEventListener('resize', onResize)
 })
 </script>
 
 <template>
-  <div class="channel-scroll-host" :style="{ height }">
+  <div
+    class="channel-scroll-host"
+    ref="containerRef"
+    :style="{ height }"
+    @scroll.passive="onScroll"
+  >
     <div
       v-if="isGrid"
       class="channel-list channel-grid"
       :class="'card-' + uiStore.channelCardSize"
-      ref="containerRef"
-      @scroll.passive="onScroll"
     >
       <button
         v-for="channel in filtered"
@@ -205,8 +231,6 @@ onBeforeUnmount(() => {
     <div
       v-else
       class="channel-list"
-      ref="containerRef"
-      @scroll.passive="onScroll"
     >
       <div class="channel-list-inner" :style="{ height: totalHeight + 'px' }">
         <button
