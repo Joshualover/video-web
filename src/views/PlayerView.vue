@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ArrowLeft,
+  LayoutGrid,
+  LayoutList,
   Loader2,
   Menu,
   PanelLeftClose,
@@ -34,6 +36,12 @@ const tabletQuery = window.matchMedia('(max-width: 1023px)')
 
 const currentPlaylist = computed(() => playlistStore.playlist)
 const activeChannel = computed(() => playlistStore.activeChannel)
+
+const activeGroupLabel = computed(() =>
+  playlistStore.activeGroup === '全部'
+    ? `全部频道（${playlistStore.playlist?.groups.length || 0} 组）`
+    : `分组：${playlistStore.activeGroup}`
+)
 
 function updateViewport() {
   isMobile.value = mobileQuery.matches
@@ -190,9 +198,10 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <button
+            v-if="!isMobile"
             class="icon-btn"
             type="button"
-            :title="sidebarCollapsed || drawerOpen ? '展开频道列表' : '收起频道列表'"
+            :title="isTablet || sidebarCollapsed ? '展开分组' : '收起分组'"
             @click="toggleSidebar"
           >
             <Menu v-if="isTablet" :size="18" />
@@ -209,20 +218,43 @@ onBeforeUnmount(() => {
         class="player-layout"
         :class="{ 'sidebar-collapsed': sidebarCollapsed, 'drawer-open': drawerOpen }"
       >
-        <aside class="channel-sidebar">
+        <!-- 分组栏：桌面固定 / 平板抽屉 / 移动端隐藏 -->
+        <aside
+          class="channel-sidebar"
+          :class="{ 'mobile-hidden': isMobile, collapsed: sidebarCollapsed && !isTablet }"
+        >
           <div class="sidebar-head">
-            <span>频道列表</span>
-            <span class="sidebar-count">
-              {{ playlistStore.filteredChannels.length }} / {{ playlistStore.channels.length }}
-            </span>
+            <span>分组导航</span>
+            <span class="sidebar-count">{{ playlistStore.groups.length }} 组</span>
           </div>
           <GroupSidebar />
-          <ChannelList height="calc(100% - 156px)" />
         </aside>
 
-        <div v-if="drawerOpen" class="drawer-backdrop" @click="drawerOpen = false"></div>
+        <div v-if="drawerOpen && isTablet" class="drawer-backdrop" @click="drawerOpen = false"></div>
 
         <main class="player-stage">
+          <!-- 移动端：分组横向切换 -->
+          <div v-if="isMobile" class="mobile-tabs">
+            <button
+              class="tab-chip"
+              :class="{ active: playlistStore.activeGroup === '全部' }"
+              type="button"
+              @click="playlistStore.setActiveGroup('全部')"
+            >
+              全部
+            </button>
+            <button
+              v-for="group in playlistStore.groups"
+              :key="group"
+              class="tab-chip"
+              :class="{ active: playlistStore.activeGroup === group }"
+              type="button"
+              @click="playlistStore.setActiveGroup(group)"
+            >
+              {{ group }}
+            </button>
+          </div>
+
           <PlayerPanel
             ref="playerPanelRef"
             :channel="activeChannel"
@@ -231,28 +263,37 @@ onBeforeUnmount(() => {
             @next="nextChannel"
           />
 
-          <section v-if="isMobile" class="mobile-channels">
-            <div class="mobile-tabs">
-              <button
-                class="tab-chip"
-                :class="{ active: playlistStore.activeGroup === '全部' }"
-                type="button"
-                @click="playlistStore.setActiveGroup('全部')"
-              >
-                全部
-              </button>
-              <button
-                v-for="group in playlistStore.groups"
-                :key="group"
-                class="tab-chip"
-                :class="{ active: playlistStore.activeGroup === group }"
-                type="button"
-                @click="playlistStore.setActiveGroup(group)"
-              >
-                {{ group }}
-              </button>
+          <!-- 频道面板：右侧，支持方块 / 列表两种视图 -->
+          <section class="channel-pane">
+            <div class="channel-pane-head">
+              <span class="pane-title">
+                {{ activeGroupLabel }}
+                <span class="pane-count">{{ playlistStore.filteredChannels.length }}</span>
+              </span>
+              <div class="view-switch" role="group" aria-label="频道显示方式">
+                <button
+                  class="view-btn"
+                  :class="{ active: uiStore.channelView === 'grid' }"
+                  type="button"
+                  title="方块视图"
+                  @click="uiStore.setChannelView('grid')"
+                >
+                  <LayoutGrid :size="16" />
+                </button>
+                <button
+                  class="view-btn"
+                  :class="{ active: uiStore.channelView === 'list' }"
+                  type="button"
+                  title="列表视图"
+                  @click="uiStore.setChannelView('list')"
+                >
+                  <LayoutList :size="16" />
+                </button>
+              </div>
             </div>
-            <ChannelList height="380px" />
+            <div class="channel-list-wrap">
+              <ChannelList :view="uiStore.channelView" height="100%" />
+            </div>
           </section>
         </main>
       </div>

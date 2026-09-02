@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { loadJson, saveJson } from '../lib/storage'
 
 const THEME_KEY = 'theme'
+const CHANNEL_VIEW_KEY = 'channelView'
 let toastSeq = 0
 
 function applyTheme(theme) {
@@ -17,7 +18,8 @@ function detectSystemTheme() {
 export const useUiStore = defineStore('ui', {
   state: () => ({
     toasts: [],
-    theme: loadJson(THEME_KEY, '') || detectSystemTheme()
+    theme: loadJson(THEME_KEY, '') || detectSystemTheme(),
+    channelView: loadJson(CHANNEL_VIEW_KEY, 'list') === 'grid' ? 'grid' : 'list'
   }),
   actions: {
     initTheme() {
@@ -30,6 +32,10 @@ export const useUiStore = defineStore('ui', {
     },
     toggleTheme() {
       this.setTheme(this.theme === 'dark' ? 'light' : 'dark')
+    },
+    setChannelView(view) {
+      this.channelView = view === 'grid' ? 'grid' : 'list'
+      saveJson(CHANNEL_VIEW_KEY, this.channelView)
     },
     toast(message, type = 'info') {
       toastSeq += 1

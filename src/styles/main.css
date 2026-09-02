@@ -923,7 +923,7 @@ input::placeholder {
 
 .player-layout {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 240px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -1192,6 +1192,100 @@ input::placeholder {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  height: calc(100vh - 132px);
+  min-height: 520px;
+  overflow-y: auto;
+}
+
+/* 频道面板：播放器下方，支持方块/列表视图 */
+.channel-pane {
+  flex: 1;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.channel-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pane-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.pane-count {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.view-switch {
+  display: inline-flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.view-btn:hover {
+  color: var(--text);
+}
+
+.view-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.channel-list-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 分组栏仅分组导航时，让分组列表占满可滚动 */
+.channel-sidebar .group-sidebar {
+  flex: 1;
+  max-height: none;
+  border-bottom: 0;
+}
+
+.channel-sidebar .group-sidebar .group-list {
+  flex: 1;
+  min-height: 0;
+}
+
+.mobile-hidden {
+  display: none;
 }
 
 .player-panel {
@@ -1202,6 +1296,7 @@ input::placeholder {
   position: relative;
   overflow: hidden;
   aspect-ratio: 16 / 9;
+  max-height: 44vh;
   border-radius: var(--radius);
   background: #000;
   border: 1px solid var(--border);
@@ -1781,6 +1876,115 @@ input::placeholder {
   margin-top: 0;
 }
 
+/* ---- 方块视图（网格卡片） ---- */
+.channel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+  gap: 9px;
+  padding: 12px;
+  align-content: start;
+}
+
+.channel-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 0 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--text);
+  text-align: left;
+  overflow: hidden;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 128px;
+  transition: border-color 0.15s, transform 0.12s;
+}
+
+.channel-card:hover {
+  border-color: var(--accent);
+}
+
+.channel-card:active {
+  transform: scale(0.98);
+}
+
+.channel-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.channel-card.invalid {
+  opacity: 0.45;
+}
+
+.channel-thumb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.channel-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.channel-thumb-fallback {
+  color: var(--text-faint);
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.channel-card-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* 方块视图内的状态点定位在缩略图左上角，收藏按钮在右上角 */
+.channel-card .status-dot {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  border: 2px solid var(--panel-2);
+  z-index: 1;
+}
+
+.channel-card .fav-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--text-dim);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.channel-card:hover .fav-btn,
+.channel-card .fav-btn:focus-visible {
+  opacity: 1;
+}
+
+.channel-card .fav-btn.active {
+  opacity: 1;
+  color: var(--accent);
+}
+
 /* Responsive */
 @media (max-width: 1023px) {
   .player-layout {
@@ -1813,9 +2017,28 @@ input::placeholder {
   .settings-grid {
     grid-template-columns: 1fr;
   }
+
+  /* 平板：抽屉内的分组栏纵向铺满 */
+  .channel-sidebar .group-sidebar .group-list {
+    flex: 1;
+  }
 }
 
 @media (max-width: 767px) {
+  .player-stage {
+    height: auto;
+    min-height: 0;
+  }
+
+  .video-wrap {
+    max-height: none;
+  }
+
+  .channel-pane {
+    height: 44vh;
+    min-height: 300px;
+  }
+
   .top-bar {
     padding: 0 12px;
   }

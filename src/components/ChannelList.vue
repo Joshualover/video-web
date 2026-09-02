@@ -3,18 +3,21 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Heart, Play } from 'lucide-vue-next'
 import { usePlaylistStore } from '../stores/playlist'
 import { useLibraryStore } from '../stores/library'
+import { useUiStore } from '../stores/ui'
 
 // 模块级缓存：坏 logo 在重新挂载后不再重复请求
 const brokenLogos = new Set()
 
-defineProps({
-  height: { type: String, default: '100%' }
+const props = defineProps({
+  height: { type: String, default: '100%' },
+  view: { type: String, default: 'list' } // 'list' | 'grid'
 })
 
 const emit = defineEmits(['play'])
 
 const playlistStore = usePlaylistStore()
 const libraryStore = useLibraryStore()
+const uiStore = useUiStore()
 
 const ROW_HEIGHT = 56
 const OVERSCAN = 6
@@ -22,8 +25,10 @@ const containerRef = ref(null)
 const scrollTop = ref(0)
 const viewportHeight = ref(600)
 
+const isGrid = computed(() => props.view === 'grid')
 const filtered = computed(() => playlistStore.filteredChannels)
 
+// ---- 列表视图（虚拟滚动）----
 const startIndex = computed(() => {
   const start = Math.floor((scrollTop.value - OVERSCAN * ROW_HEIGHT) / ROW_HEIGHT)
   return Math.max(0, start)
@@ -51,6 +56,7 @@ function updateViewport() {
   viewportHeight.value = containerRef.value.clientHeight || 600
 }
 
+// ---- 通用 ----
 function logoFailed(channel) {
   brokenLogos.add(channel.id)
   channel.logo = ''
@@ -88,6 +94,13 @@ function scrollActiveIntoView() {
     (channel) => channel.id === playlistStore.activeChannelId
   )
   if (index < 0 || !containerRef.value) return
+  if (isGrid.value) {
+    const el = containerRef.value.querySelector(
+      `.channel-card[data-id="${playlistStore.activeChannelId}"]`
+    )
+    el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    return
+  }
   const top = index * ROW_HEIGHT
   if (top < scrollTop.value || top > scrollTop.value + viewportHeight.value - ROW_HEIGHT) {
     containerRef.value.scrollTop = Math.max(0, top - viewportHeight.value / 2)
@@ -116,7 +129,62 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="channel-list" ref="containerRef" :style="{ height }" @scroll.passive="onScroll">
+  <div
+    v-if="isGrid"
+    class="channel-list channel-grid"
+    ref="containerRef"
+    :style="{ height }"
+    @scroll.passive="onScroll"
+  >
+    <button
+      v-for="channel in filtered"
+      :key="channel.id"
+      class="channel-card"
+      :data-id="channel.id"
+      :class="{
+        active: channel.id === playlistStore.activeChannelId,
+        invalid: !channel.valid
+      }"
+      type="button"
+      :title="channel.valid ? channel.name : '地址格式无效'"
+      @click="selectChannel(channel)"
+    >
+      <span class="channel-thumb">
+        <img
+          v-if="channel.logo && !brokenLogos.has(channel.id)"
+          :src="channel.logo"
+          alt=""
+          loading="lazy"
+          @error="logoFailed(channel)"
+        />
+        <span v-else class="channel-thumb-fallback">{{ channel.name.slice(0, 2) }}</span>
+        <span class="status-dot" :class="channelStatusClass(channel)"></span>
+      </span>
+      <span class="channel-card-name">{{ channel.name }}</span>
+      <button
+        class="icon-btn fav-btn"
+        :class="{ active: isFavorite(channel) }"
+        type="button"
+        :title="isFavorite(channel) ? '取消收藏' : '收藏'"
+        @click="toggleFavorite(channel, $event)"
+      >
+        <Heart :size="13" :fill="isFavorite(channel) ? 'currentColor' : 'none'" />
+      </button>
+    </button>
+
+    <div v-if="!filtered.length" class="channel-empty">
+      <Play :size="22" />
+      <span>没有匹配的频道</span>
+    </div>
+  </div>
+
+  <div
+    v-else
+    class="channel-list"
+    ref="containerRef"
+    :style="{ height }"
+    @scroll.passive="onScroll"
+  >
     <div class="channel-list-inner" :style="{ height: totalHeight + 'px' }">
       <button
         v-for="(channel, index) in visibleChannels"
