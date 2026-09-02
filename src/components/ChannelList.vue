@@ -132,7 +132,7 @@ onBeforeUnmount(() => {
   <div
     v-if="isGrid"
     class="channel-list channel-grid"
-    :class="uiStore.channelCardSize"
+    :class="'card-' + uiStore.channelCardSize"
     ref="containerRef"
     :style="{ height }"
     @scroll.passive="onScroll"
