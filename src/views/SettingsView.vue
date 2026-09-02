@@ -62,7 +62,7 @@ async function saveNewPlaylist() {
 
 function loadSaved(item) {
   playlistStore.loadByUrl(item.name, item.url, {
-    navigate: () => router.push('/player')
+    navigate: () => router.push('/channels')
   })
 }
 

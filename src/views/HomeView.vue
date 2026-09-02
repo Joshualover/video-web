@@ -46,7 +46,7 @@ async function loadFromUrl() {
   }
   clearError()
   const ok = await playlistStore.loadByUrl('', url, {
-    navigate: () => router.push('/player')
+    navigate: () => router.push('/channels')
   })
   if (ok) urlInput.value = ''
 }
@@ -67,20 +67,20 @@ async function handleFile(event) {
   const text = await file.text()
   clearError()
   if (playlistStore.loadByContent(name, text)) {
-    router.push('/player')
+    router.push('/channels')
   }
 }
 
 function loadSample() {
   clearError()
   playlistStore.loadSample()
-  router.push('/player')
+  router.push('/channels')
 }
 
 function loadSaved(item) {
   clearError()
   playlistStore.loadByUrl(item.name, item.url, {
-    navigate: () => router.push('/player')
+    navigate: () => router.push('/channels')
   })
 }
 
@@ -127,7 +127,7 @@ function formatBytes(bytes) {
 async function loadServer(file) {
   const ok = await playlistStore.loadServerFile(file.name)
   if (ok) {
-    router.push('/player')
+    router.push('/channels')
   } else {
     uiStore.toast(playlistStore.loadError || '加载失败', 'error')
   }

@@ -21,14 +21,14 @@ const uiStore = useUiStore()
 
 const navItems = [
   { to: '/', label: '首页', icon: Home },
-  { to: '/player', label: '播放', icon: ListVideo, disabled: computed(() => !playlistStore.playlist) },
+  { to: '/channels', label: '频道', icon: ListVideo, disabled: computed(() => !playlistStore.playlist) },
   { to: '/favorites', label: '收藏', icon: Star },
   { to: '/recents', label: '最近', icon: History },
   { to: '/settings', label: '设置', icon: Settings }
 ]
 
 const activeName = computed(() => {
-  if (route.path === '/player') return '播放'
+  if (route.path === '/channels' || route.path === '/player') return '频道'
   if (route.path === '/favorites') return '收藏'
   if (route.path === '/recents') return '最近'
   if (route.path === '/settings') return '设置'

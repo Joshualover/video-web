@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import HomeView from './views/HomeView.vue'
+import ChannelListView from './views/ChannelListView.vue'
 import PlayerView from './views/PlayerView.vue'
 import FavoritesView from './views/FavoritesView.vue'
 import RecentsView from './views/RecentsView.vue'
@@ -11,6 +12,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'home', component: HomeView },
+    { path: '/channels', name: 'channels', component: ChannelListView },
     { path: '/player', name: 'player', component: PlayerView },
     { path: '/favorites', name: 'favorites', component: FavoritesView },
     { path: '/recents', name: 'recents', component: RecentsView },

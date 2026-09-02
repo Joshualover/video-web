@@ -1879,9 +1879,9 @@ input::placeholder {
 /* ---- 方块视图（网格卡片） ---- */
 .channel-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
-  gap: 9px;
-  padding: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
+  gap: 12px;
+  padding: 14px;
   align-content: start;
 }
 
@@ -1889,9 +1889,9 @@ input::placeholder {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
-  padding: 0 0 7px;
+  padding: 0 0 9px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--panel-2);
@@ -1899,7 +1899,7 @@ input::placeholder {
   text-align: left;
   overflow: hidden;
   content-visibility: auto;
-  contain-intrinsic-size: auto 128px;
+  contain-intrinsic-size: auto 220px;
   transition: border-color 0.15s, transform 0.12s;
 }
 
@@ -1925,7 +1925,7 @@ input::placeholder {
   display: grid;
   place-items: center;
   width: 100%;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 3 / 4;
   background: var(--bg-soft);
   overflow: hidden;
 }
@@ -1945,11 +1945,13 @@ input::placeholder {
 .channel-card-name {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  padding: 0 8px;
-  font-size: 12px;
-  line-height: 1.4;
+  padding: 0 9px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  min-height: 2.4em;
+  word-break: break-all;
 }
 
 /* 方块视图内的状态点定位在缩略图左上角，收藏按钮在右上角 */
@@ -1985,10 +1987,133 @@ input::placeholder {
   color: var(--accent);
 }
 
+/* ---- 频道浏览页（左分组 + 右列表，无播放器） ---- */
+.browse-wrap {
+  padding: 16px 20px 28px;
+}
+
+.browse-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 16px;
+  height: calc(100vh - 132px);
+  min-height: 520px;
+}
+
+.browse-layout.sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.browse-stage {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.browse-stage .channel-pane {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---- 播放页（独立播放器） ---- */
+.watch-wrap {
+  padding: 16px 20px 28px;
+}
+
+.watch-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.watch-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.watch-info h1 {
+  margin: 0 0 4px;
+  overflow: hidden;
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-badges {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.watch-badges span {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.watch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.watch-stage {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.watch-stage .video-wrap {
+  max-height: 76vh;
+}
+
+.watch-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 14px 0 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-align: center;
+  flex-wrap: wrap;
+}
+
+.watch-count {
+  margin-left: 8px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
 /* Responsive */
 @media (max-width: 1023px) {
   .player-layout {
     display: block;
+  }
+
+  /* 频道浏览页在平板同样转抽屉布局 */
+  .browse-layout {
+    display: block;
+    height: auto;
+    min-height: 0;
+  }
+
+  .browse-stage {
+    height: calc(100vh - 132px);
+    min-height: 480px;
+  }
+
+  .browse-layout.drawer-open .channel-sidebar {
+    transform: translateX(0);
+  }
+
+  .browse-layout.sidebar-collapsed .channel-sidebar {
+    width: 300px;
+    opacity: 1;
   }
 
   .channel-sidebar {
@@ -2034,9 +2159,31 @@ input::placeholder {
     max-height: none;
   }
 
+  .browse-stage {
+    height: auto;
+    min-height: 0;
+  }
+
+  .browse-wrap,
+  .watch-wrap {
+    padding: 12px 10px 24px;
+  }
+
+  .watch-actions .btn-small {
+    padding: 0 10px;
+  }
+
+  .watch-stage .video-wrap {
+    max-height: none;
+  }
+
   .channel-pane {
     height: 44vh;
     min-height: 300px;
+  }
+
+  .channel-grid {
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   }
 
   .top-bar {
