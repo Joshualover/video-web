@@ -179,25 +179,37 @@ onBeforeUnmount(() => {
                 {{ activeGroupLabel }}
                 <span class="pane-count">{{ playlistStore.filteredChannels.length }}</span>
               </span>
-              <div class="view-switch" role="group" aria-label="频道显示方式">
-                <button
-                  class="view-btn"
-                  :class="{ active: uiStore.channelView === 'grid' }"
-                  type="button"
-                  title="方块视图"
-                  @click="uiStore.setChannelView('grid')"
+              <div class="pane-tools">
+                <select
+                  class="sort-select"
+                  :value="uiStore.channelSort"
+                  aria-label="频道排序"
+                  @change="uiStore.setChannelSort($event.target.value)"
                 >
-                  <LayoutGrid :size="16" />
-                </button>
-                <button
-                  class="view-btn"
-                  :class="{ active: uiStore.channelView === 'list' }"
-                  type="button"
-                  title="列表视图"
-                  @click="uiStore.setChannelView('list')"
-                >
-                  <LayoutList :size="16" />
-                </button>
+                  <option value="default">默认排序</option>
+                  <option value="name-asc">名称 A→Z</option>
+                  <option value="name-desc">名称 Z→A</option>
+                </select>
+                <div class="view-switch" role="group" aria-label="频道显示方式">
+                  <button
+                    class="view-btn"
+                    :class="{ active: uiStore.channelView === 'grid' }"
+                    type="button"
+                    title="方块视图"
+                    @click="uiStore.setChannelView('grid')"
+                  >
+                    <LayoutGrid :size="16" />
+                  </button>
+                  <button
+                    class="view-btn"
+                    :class="{ active: uiStore.channelView === 'list' }"
+                    type="button"
+                    title="列表视图"
+                    @click="uiStore.setChannelView('list')"
+                  >
+                    <LayoutList :size="16" />
+                  </button>
+                </div>
               </div>
             </div>
             <div class="channel-list-wrap">

@@ -4,6 +4,7 @@ import { loadJson, saveJson } from '../lib/storage'
 const THEME_KEY = 'theme'
 const CHANNEL_VIEW_KEY = 'channelView'
 const CARD_SIZE_KEY = 'cardSize'
+const CHANNEL_SORT_KEY = 'channelSort'
 let toastSeq = 0
 
 function applyTheme(theme) {
@@ -24,6 +25,10 @@ export const useUiStore = defineStore('ui', {
     channelCardSize: (() => {
       const size = loadJson(CARD_SIZE_KEY, 'md')
       return ['sm', 'md', 'lg'].includes(size) ? size : 'md'
+    })(),
+    channelSort: (() => {
+      const sort = loadJson(CHANNEL_SORT_KEY, 'default')
+      return ['default', 'name-asc', 'name-desc'].includes(sort) ? sort : 'default'
     })()
   }),
   actions: {
@@ -45,6 +50,10 @@ export const useUiStore = defineStore('ui', {
     setChannelCardSize(size) {
       this.channelCardSize = ['sm', 'md', 'lg'].includes(size) ? size : 'md'
       saveJson(CARD_SIZE_KEY, this.channelCardSize)
+    },
+    setChannelSort(sort) {
+      this.channelSort = ['default', 'name-asc', 'name-desc'].includes(sort) ? sort : 'default'
+      saveJson(CHANNEL_SORT_KEY, this.channelSort)
     },
     toast(message, type = 'info') {
       toastSeq += 1

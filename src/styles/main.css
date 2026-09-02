@@ -1270,6 +1270,67 @@ input::placeholder {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+/* ChannelList 滚动宿主：高度由外部决定，内部列表独立滚动 */
+.channel-scroll-host {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.channel-scroll-host > .channel-list {
+  height: 100%;
+  min-height: 0;
+}
+
+/* 回到顶部按钮 */
+.to-top-btn {
+  position: absolute;
+  right: 16px;
+  bottom: 18px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--panel-3);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  opacity: 0.92;
+  transition: background 0.15s, transform 0.12s;
+}
+
+.to-top-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.to-top-btn:active {
+  transform: scale(0.92);
+}
+
+.pane-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.sort-select {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 12.5px;
 }
 
 /* 分组栏仅分组导航时，让分组列表占满可滚动 */
@@ -2037,6 +2098,7 @@ input::placeholder {
 .browse-layout {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   height: calc(100vh - 132px);
   min-height: 520px;
@@ -2048,9 +2110,11 @@ input::placeholder {
 
 .browse-stage {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: hidden;
 }
 
 .browse-stage .channel-pane {
