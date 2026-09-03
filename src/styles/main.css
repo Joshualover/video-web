@@ -2309,9 +2309,16 @@ input::placeholder {
     padding: 0 12px;
   }
 
-  .brand-sub,
-  .top-meta {
+  .brand-sub {
     display: none;
+  }
+
+  .meta-chip {
+    display: none;
+  }
+
+  .top-meta .icon-btn {
+    margin-left: 6px;
   }
 
   .top-nav {
