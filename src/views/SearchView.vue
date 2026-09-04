@@ -172,7 +172,8 @@ async function poll() {
 function describeResult(r) {
   if (!r) return '完成'
   if (r.mode === 'merge') {
-    return `并入 ${r.file}：新增 ${r.added} 条，跳过重复 ${r.dup} 条`
+    const groupNote = r.groupExisted ? `已有分组「${r.group}」` : `新建分组「${r.group}」`
+    return `并入 ${r.file}（${groupNote}）：新增 ${r.added} 条，去重 ${r.dup} 条`
   }
   return `已生成 data/${r.file}，共 ${r.count} 条`
 }
@@ -333,7 +334,7 @@ onBeforeUnmount(() => {
         <div class="result-body">
           <strong>{{ describeResult(result) }}</strong>
           <span v-if="result.mode === 'merge'">
-            组「{{ result.group }}」已并入 data/{{ result.file }}
+            {{ result.groupExisted ? '并入已有' : '新建' }}分组「{{ result.group }}」· 命名 {{ result.groupNext ? '至 ' + result.groupNext : '' }}号
           </span>
           <span v-else>已生成到 data/{{ result.file }}</span>
         </div>

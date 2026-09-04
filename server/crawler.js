@@ -193,25 +193,47 @@ async function crawlItems(page, bases, items, onProgress) {
   return results
 }
 
-// 把条目并入目标 m3u（组 = group，命名 = 序号+标题，URL 去重）
+// 从标题/频道名提取作品番号（如 IPZZ-926、SNOS-069B），用于同作品去重
+function extractCode(name) {
+  const m = String(name || '').match(/([A-Za-z]{2,8}-\d{2,6}[A-Za-z]?)/)
+  return m ? m[1].toUpperCase() : ''
+}
+
+// 把条目并入目标 m3u：
+// - 组 = group；目标文件已有同名分组时并入同组并续编号，否则新建分组
+// - 去重：URL 相同、或同番号（同一部作品的不同条目/清晰度）均只保留一条
 export function mergeIntoM3u(filePath, group, items) {
   const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : ''
   const channels = raw.trim()
     ? parseM3u(raw).channels.map((c) => ({ ...c }))
     : []
+  const groupExisted = channels.some((c) => c.group === group)
   const vUrls = new Set(channels.map((c) => c.url))
+  const vCodes = new Set(channels.map((c) => extractCode(c.name)).filter(Boolean))
   const exist = channels.filter((c) => c.group === group)
   let next = exist.length ? Math.max(...exist.map((c) => parseInt(c.name, 10) || 0), 0) + 1 : 1
   let added = 0
   let dup = 0
+  const batchCodes = new Set()
   for (const it of items) {
+    const title = String(it.title || '未命名')
     if (!it.url || vUrls.has(it.url)) {
       dup += 1
       continue
     }
+    // 同番号去重：目标文件中已有，或本批内已出现过（多清晰度/重复条目）
+    const code = extractCode(title)
+    if (code && (vCodes.has(code) || batchCodes.has(code))) {
+      dup += 1
+      continue
+    }
+    if (code) {
+      vCodes.add(code)
+      batchCodes.add(code)
+    }
     channels.push({
       id: '',
-      name: `${next} ${it.title || '未命名'}`,
+      name: `${next} ${title}`,
       url: it.url,
       logo: '',
       group,
@@ -237,7 +259,14 @@ export function mergeIntoM3u(filePath, group, items) {
     lines.push(c.url)
   }
   writeFileSync(filePath, lines.join('\n') + '\n', 'utf8')
-  return { added, dup, total: channels.length, groupCount: new Set(channels.map((c) => c.group)).size }
+  return {
+    added,
+    dup,
+    total: channels.length,
+    groupCount: new Set(channels.map((c) => c.group)).size,
+    groupExisted,
+    groupNext: next - 1
+  }
 }
 
 // 抓取选中项 → 生成新文件或并入目标文件
