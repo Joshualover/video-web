@@ -223,7 +223,7 @@ onBeforeUnmount(() => {
           <input
             v-model="keyword"
             type="text"
-            placeholder="输入关键词，如：三上悠亚 / 小那海"
+            placeholder="输入作品关键词搜索"
             aria-label="搜索关键词"
             :disabled="searching || crawlRunning"
             @keydown.enter="startSearch"
