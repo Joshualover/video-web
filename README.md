@@ -1,23 +1,43 @@
 # 流光播放器
 
-基于 PRD《音视频播放网站开发需求文档（PRD）.md》实现的在线音视频播放网站。支持通过 URL 或本地文件加载 m3u / m3u8 播放列表，在浏览器中直接播放 HLS 点播与直播流。
+基于 PRD《音视频播放网站开发需求文档（PRD）.md》实现的在线音视频播放网站。支持通过 URL、本地文件或**服务器 data 目录**加载 m3u / m3u8 播放列表，在浏览器中直接播放 HLS 点播与直播流；内置**站内搜片**（搜索并抓取 m3u8，自动并入已有列表）。
 
 ## 功能
 
-- 登录保护：默认账号 `admin` / 密码 `admin123`（设置页可修改密码、退出登录）
-- 白天 / 夜晚主题切换（顶部栏太阳/月亮按钮，自动记住选择）
-- 收藏、最近播放均为独立页面（顶部导航进入）
-- URL 导入与本地文件上传（m3u / m3u8 / txt，单文件 ≤ 5MB）
-- m3u 扩展标签解析：`EXTINF` 属性、`tvg-logo`、`group-title`、`EXTGRP`、纯 URL 列表
-- 分组导航、分组搜索、频道搜索、大列表虚拟滚动（>200 频道自动窗口化）
-- video.js 播放器：播放/暂停、音量、进度、全屏、倍速、画中画、LIVE 标识、音频模式
-- 播放错误区分处理、自动重试一次、断网恢复自动重试
-- 最近播放（20 条）、收藏（100 个）、多播放列表管理（10 个），全部存于 localStorage
-- 响应式布局：桌面侧栏、平板抽屉、移动端分组 Tab + 下方频道列表
-- 键盘快捷键：空格播放/暂停、左右快进退 10s、上下音量、F 全屏、M 静音、N 下一个频道
-- Express CORS 代理（10s 超时、10MB 上限、支持任意端口与内网资源）
+### 播放与列表
+- **服务器 data 目录**：首页自动列出 `data/` 下的 m3u 文件并自动加载第一个，点击可切换加载
+- URL 导入、本地文件上传（m3u / m3u8 / txt，≤5MB）、向服务器 data 目录上传（设置页）
+- m3u 解析：`EXTINF` 属性、`tvg-logo`、`group-title`、`EXTGRP`、纯 URL 列表，支持「分组按序编号」的文件
+- **频道页**（左分组导航 + 右列表）：方块（正方形卡片墙，大小可调）/ 列表（行式虚拟滚动）双视图切换
+- 排序（默认 / 名称 A→Z / Z→A）、频道搜索、一键回到顶部、分组栏滚动
+- video.js 播放器：播放/暂停、音量、进度、全屏、倍速、画中画、LIVE 标识、音频模式、**自动连播**（点播结束自动下一频道，可关）
+- 播放错误区分提示、自动重试一次、断网恢复自动重试
+- 键盘快捷键：空格播放/暂停、←→ 快进退 10s、↑↓ 音量、F 全屏、M 静音、N/P 上/下一个频道
 
-内网访问默认开启。如需恢复 SSRF 防护（拒绝 localhost / 内网 IP），启动时设置环境变量：
+### 站内搜片（两阶段）
+「搜片」页输入关键词 → ① **搜索并预览结果**（标题列表，勾选/全选）→ ② **抓取所选**：
+- 生成新文件到 `data/{关键词}.m3u`，或**并入 data 中已有 m3u**（如 v100.m3u）
+- 并入规则：新建/追加「关键词」分组，命名 `序号+标题`，URL 自动去重
+- 实时进度（第 X/N 条）、去重报告、完成后一键加载列表
+- 站点壳域名自动切换（678060 / 678063 / 678064，失效自动换池内可用域名）
+
+### 其他
+- 登录保护：默认账号 `admin` / 密码 `admin123`（设置页可修改、退出）
+- 白天/夜晚主题切换（顶部太阳/月亮按钮，跟随系统默认，记住选择）
+- 收藏、最近播放独立页面（各存 localStorage，可导出/导入 JSON 备份跨设备迁移）
+- 多播放列表管理（保存常用 URL，10 个）
+- 响应式：桌面固定布局、平板抽屉、移动端分组 Tab + 频道列表
+
+## 服务器 data 目录
+
+`data/` 目录放置 m3u/m3u8 文件即出现在首页「服务器目录」。注意：
+- **`data/` 在 .gitignore 中，不随 git 推送**——服务器部署需手动同步该目录，或用网页「上传 m3u」功能
+- 服务器启动时自动创建 `data/`（不存在时）
+- 首页自动加载文件按文件名排序的第一个
+
+## 代理环境变量
+
+内网访问默认开启。如需恢复 SSRF 防护（拒绝 localhost / 内网 IP）：
 
 ```bash
 ALLOW_PRIVATE_NETWORK=false npm start
@@ -29,11 +49,11 @@ ALLOW_PRIVATE_NETWORK=false npm start
 ALLOW_INSECURE_TLS=false npm start
 ```
 
-公网部署时建议为代理接口设置访问令牌（否则任何网站都能借用该代理转发请求）：
+公网部署建议为接口设置访问令牌（否则任何网站都能借用代理，且搜索/上传接口可被他人调用）：
 
 ```bash
 PROXY_TOKEN=your-secret-token npm start
-# 前端构建时注入同名令牌（可选，设置了才能通过代理加载）
+# 前端构建时注入同名令牌（可选）
 VITE_PROXY_TOKEN=your-secret-token npm run build
 ```
 
@@ -44,108 +64,64 @@ npm install
 npm run dev
 ```
 
-- 前端：http://localhost:5173
-- 代理接口：http://localhost:8787/api/proxy?url=...
+- 前端：http://localhost:5173（`/api` 代理到 8787）
+- 完整服务：http://localhost:8787（生产模式 `npm run build && npm start`）
 
-Vite 开发服务器会把 `/api` 转发到 Express 代理服务。
+## 部署要求（搜片功能）
 
-## 生产运行
+「站内搜片」需要**真实浏览器内核**（站点反爬校验 TLS 指纹，curl 会被拒）：
+- Windows：自动使用本机 Edge/Chrome
+- Linux 服务器：安装浏览器并设置路径：
 
 ```bash
-npm run build
-npm start
+# 任选其一：
+# 1) 系统安装 Chromium 并指定
+BROWSER_PATH=/usr/bin/chromium npm start
+# 2) 使用 playwright 自带内核
+npm i -D playwright-core && npx playwright-core install chromium
 ```
 
-Express 会同时托管 `dist` 静态文件与 `/api/proxy` 接口，访问 http://localhost:8787 即可。
+首次使用搜片前请确认浏览器可用（`node -e "import('./server/crawler.js').then(m=>console.log(m.findBrowser()))"`）。
 
 ## Vercel 一键部署
 
-项目已内置 `vercel.json` 与 `api/` 下的 Serverless Function，可直接部署到 Vercel：
+内置 `vercel.json` 与 `api/` Serverless Function，可直接部署（仅静态托管 + `/api/proxy`，**不含搜片**，搜片需自有服务器）：
 
-1. 点击下方按钮（需登录 Vercel 并授权 GitHub 仓库）：
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FJoshualover%2Fvideo-web)
 
-   [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FJoshualover%2Fvideo-web)
+环境变量：`ALLOW_PRIVATE_NETWORK=false`、`PROXY_TOKEN`、`VITE_PROXY_TOKEN`。
 
-2. 或在 Vercel 控制台 Import 该仓库：框架选 **Other**，构建命令 `npm run build`，输出目录 `dist`（`vercel.json` 已配置，通常无需手动改）。
+## 1Panel 部署（自有服务器，推荐）
 
-3. 需要时在项目 Settings → Environment Variables 中配置：
-   - `ALLOW_PRIVATE_NETWORK=false` — 公网部署建议开启 SSRF 防护（拒绝内网地址）
-   - `ALLOW_INSECURE_TLS=true` — 跳过自签名证书校验（默认已开启）
-   - `PROXY_TOKEN=your-secret` — 为代理接口设置访问令牌，防止被他人借用
-   - `VITE_PROXY_TOKEN=your-secret` — 构建时注入，前端通过代理加载时会自动携带令牌（需与 `PROXY_TOKEN` 一致）
+后端为 Node.js（Express），使用 1Panel 的 **Node.js 运行环境**即可：
 
-> 部署后前端为 Vercel CDN 静态托管，`/api/proxy` 由 Serverless Function 提供，无需自建服务器。
+1. 1Panel → 运行环境 → Node.js → 安装 Node 20
+2. 服务器：`git clone https://github.com/Joshualover/video-web.git && cd video-web && npm install && npm run build`
+3. 1Panel → 网站 → Node 项目 → 创建：源码目录 /opt/video-web、启动文件 `server/index.js`、端口 8787、Node 版本 20
+4. 环境变量：`PORT=8787`、`ALLOW_PRIVATE_NETWORK=true`、`ALLOW_INSECURE_TLS=true`；搜片需 `BROWSER_PATH`（见上）
+5. 绑定域名 + HTTPS（Let's Encrypt 自动反代到 127.0.0.1:8787）
 
-## 1Panel 部署（自有服务器）
-
-项目后端为纯 Node.js（Express），**使用 1Panel 的 Node.js 运行环境即可**，无需 Docker、无需数据库。
-
-### 方式一：Node.js 运行环境（推荐）
-
-**1. 安装 Node 环境**
-
-1Panel → 运行环境 → Node.js → 安装 Node 20（18+ 均可）。
-
-**2. 获取源码并构建**
-
-服务器终端执行：
-
-```bash
-cd /opt
-git clone https://github.com/Joshualover/video-web.git
-cd video-web
-npm install
-npm run build   # 生成 dist 静态资源（server 会自动托管）
-```
-
-**3. 创建 Node 项目**
-
-1Panel → 网站 → Node 项目 → 创建：
-
-| 配置项 | 值 |
-| --- | --- |
-| 项目名称 | video-web |
-| 源码目录 | /opt/video-web |
-| 启动文件 | server/index.js |
-| Node 版本 | 20（已安装的版本） |
-| 端口 | 8787 |
-| 环境变量 | `PORT=8787`、`ALLOW_PRIVATE_NETWORK=true`、`ALLOW_INSECURE_TLS=true`（公网建议加 `PROXY_TOKEN=xxx`，并将 `ALLOW_PRIVATE_NETWORK` 改为 `false`） |
-
-**4. 绑定域名与 HTTPS**
-
-- 网站列表 → video-web → 域名：添加域名，1Panel 会自动反向代理到 `127.0.0.1:8787`
-- 证书：申请 Let's Encrypt 证书或导入自有证书，开启 HTTPS
-
-**5. 访问** `https://你的域名` 即可。升级时在服务器执行 `git pull && npm install && npm run build`，再到 1Panel 重启项目。
-
-> 进程守护：1Panel 自带守护，无需额外配置；若习惯 PM2，可引用仓库根目录的 `ecosystem.config.cjs`。
-
-### 方式二：Docker（可选）
-
-仓库已提供 `Dockerfile` 与 `docker-compose.yml`：
-
-1. 1Panel → 容器 → 编排 → 创建，选择 Git 仓库或上传源码目录（含 Dockerfile）
-2. 或服务器终端：`cd /opt/video-web && docker compose up -d --build`
-3. 端口映射 `8787:8787`，环境变量在 compose 中按需修改
+Docker 方式：仓库含 `Dockerfile` / `docker-compose.yml`（构建阶段需含浏览器：请参考 Dockerfile 注释自行添加 chromium 安装层）。
 
 ## 目录结构
 
 ```text
-server/index.js        Express CORS 代理（含 SSRF 防护），本地生产运行
+server/index.js        Express：静态托管 + 代理 + data 播放列表 + 搜片任务接口
 server/proxy-core.js   代理核心逻辑（Express 与 Vercel Serverless 共用）
-api/proxy.js           Vercel Serverless 代理接口
-api/health.js          Vercel 健康检查接口
+server/crawler.js      站内搜片爬虫（搜索/抓取/并入 m3u，壳域名自动切换）
+data/                  m3u 播放列表目录（不入 git，需手动同步）
+api/                   Vercel Serverless（仅 /api/proxy、/api/health）
 vercel.json            Vercel 构建与路由配置
-ecosystem.config.cjs   PM2 进程守护配置（可选）
-Dockerfile / docker-compose.yml   Docker 部署（可选）
-src/lib/m3u.js         m3u / m3u8 解析器
+ecosystem.config.cjs   PM2 配置（可选）
+Dockerfile / docker-compose.yml    Docker 部署（可选）
+src/lib/m3u.js         m3u / m3u8 解析器（分组/属性/EXTGRP）
 src/lib/fetch.js       远程加载与代理降级
 src/lib/storage.js     localStorage 封装
-src/stores/            播放列表、播放器、收藏/最近/已保存列表
-src/components/        分组、频道列表、播放器、顶部导航
-src/views/             首页、播放页、收藏页、设置页
+src/stores/            播放列表 / 播放器 / 收藏最近 / UI / 登录
+src/views/             首页 / 频道列表 / 播放 / 收藏 / 最近 / 搜片 / 设置 / 登录
+scripts/test-m3u.mjs   m3u 解析器单元测试
 ```
 
 ## 免责声明
 
-本项目仅提供播放工具，不存储、不转码、不传播任何音视频内容。播放可用性取决于第三方源站。
+本项目仅提供播放工具，不存储、不转码、不传播任何音视频内容；播放可用性取决于第三方源站。
