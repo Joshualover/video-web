@@ -7,6 +7,7 @@ import {
   Home,
   ListVideo,
   Moon,
+  Search,
   Settings,
   Star,
   Sun,
@@ -24,6 +25,7 @@ const navItems = [
   { to: '/channels', label: '频道', icon: ListVideo, disabled: computed(() => !playlistStore.playlist) },
   { to: '/favorites', label: '收藏', icon: Star },
   { to: '/recents', label: '最近', icon: History },
+  { to: '/search', label: '搜片', icon: Search },
   { to: '/settings', label: '设置', icon: Settings }
 ]
 
@@ -31,6 +33,7 @@ const activeName = computed(() => {
   if (route.path === '/channels' || route.path === '/player') return '频道'
   if (route.path === '/favorites') return '收藏'
   if (route.path === '/recents') return '最近'
+  if (route.path === '/search') return '搜片'
   if (route.path === '/settings') return '设置'
   return '首页'
 })

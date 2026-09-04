@@ -5,6 +5,7 @@ import ChannelListView from './views/ChannelListView.vue'
 import PlayerView from './views/PlayerView.vue'
 import FavoritesView from './views/FavoritesView.vue'
 import RecentsView from './views/RecentsView.vue'
+import SearchView from './views/SearchView.vue'
 import SettingsView from './views/SettingsView.vue'
 import LoginView from './views/LoginView.vue'
 
@@ -16,6 +17,7 @@ const router = createRouter({
     { path: '/player', name: 'player', component: PlayerView },
     { path: '/favorites', name: 'favorites', component: FavoritesView },
     { path: '/recents', name: 'recents', component: RecentsView },
+    { path: '/search', name: 'search', component: SearchView },
     { path: '/settings', name: 'settings', component: SettingsView },
     { path: '/login', name: 'login', component: LoginView }
   ],

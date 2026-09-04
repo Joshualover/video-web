@@ -3,10 +3,12 @@ import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { readdir, readFile, stat, writeFile, mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import crypto from 'node:crypto'
 import {
   proxyFetch,
   tokenAllowed
 } from './proxy-core.js'
+import { searchSite } from './crawler.js'
 
 const app = express()
 const PORT = Number(process.env.PORT) || 8787
@@ -15,6 +17,7 @@ const distDir = path.resolve(__dirname, '../dist')
 const DATA_DIR = path.resolve(__dirname, '../data')
 const ALLOWED_DATA_EXT = ['.m3u', '.m3u8', '.txt']
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+const ALLOWED_CRAWL_BASES = ['https://678060.xyz', 'https://678063.xyz']
 
 // 校验 data 目录文件名，防路径穿越（仅允许纯文件名 + 允许的扩展名）
 function safeDataName(name) {
@@ -47,6 +50,7 @@ async function listDataFiles() {
   return files
 }
 
+app.use(express.json({ limit: '1mb' }))
 app.use((req, res, next) => {
   if (req.path.startsWith('/api')) {
     res.set('Access-Control-Allow-Origin', '*')
@@ -125,6 +129,82 @@ app.post(
     }
   }
 )
+
+// ---- 站内搜索抓取任务（生成 m3u 到 data 目录） ----
+const crawlTasks = new Map()
+let crawlRunning = false
+
+app.post('/api/site-search', assertProxyToken, async (req, res) => {
+  const wd = String(req.body?.wd || '').trim()
+  const base = String(req.body?.base || 'https://678060.xyz').replace(/\/+$/, '')
+  const limit = Math.min(Math.max(Number(req.body?.limit) || 100, 1), 500)
+  if (!wd || wd.length > 50) {
+    return res.status(400).json({ error: '请输入 1-50 字关键词' })
+  }
+  if (!ALLOWED_CRAWL_BASES.includes(base)) {
+    return res.status(400).json({ error: '站点地址不在支持范围' })
+  }
+  if (crawlRunning) {
+    return res.status(409).json({ error: '已有抓取任务进行中，请稍候再试' })
+  }
+  const taskId = crypto.randomBytes(6).toString('hex')
+  const task = {
+    id: taskId,
+    state: 'running',
+    done: 0,
+    total: 0,
+    current: '',
+    file: null,
+    count: 0,
+    error: null,
+    startedAt: Date.now()
+  }
+  crawlTasks.set(taskId, task)
+  if (crawlTasks.size > 30) {
+    const oldest = crawlTasks.keys().next().value
+    if (oldest && crawlTasks.get(oldest)?.state !== 'running') crawlTasks.delete(oldest)
+  }
+  crawlRunning = true
+  void (async () => {
+    try {
+      const r = await searchSite(wd, {
+        base,
+        limit,
+        outDir: DATA_DIR,
+        onProgress: (done, total, title) => {
+          task.done = done
+          task.total = total
+          task.current = String(title || '').slice(0, 60)
+        }
+      })
+      task.state = 'done'
+      task.file = r.file
+      task.count = r.count
+      task.total = r.total
+    } catch (err) {
+      task.state = 'error'
+      task.error = err.message || '抓取失败'
+    } finally {
+      crawlRunning = false
+    }
+  })()
+  res.json({ ok: true, taskId })
+})
+
+app.get('/api/site-search/status', (req, res) => {
+  const task = crawlTasks.get(String(req.query.taskId || ''))
+  if (!task) return res.status(404).json({ error: '任务不存在' })
+  res.json({
+    id: task.id,
+    state: task.state,
+    done: task.done,
+    total: task.total,
+    current: task.current,
+    file: task.file,
+    count: task.count,
+    error: task.error
+  })
+})
 
 if (existsSync(distDir)) {
   app.use(
