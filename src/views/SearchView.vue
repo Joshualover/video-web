@@ -23,7 +23,7 @@ const playlistStore = usePlaylistStore()
 const uiStore = useUiStore()
 
 const keyword = ref('')
-const base = ref('https://678064.xyz')
+const base = ref('https://678069.xyz')
 
 // 阶段一：搜索结果
 const searching = ref(false)
@@ -233,7 +233,8 @@ onBeforeUnmount(() => {
           <label class="opt-field">
             站点
             <select v-model="base" :disabled="searching || crawlRunning">
-              <option value="https://678064.xyz">678064.xyz（当前）</option>
+              <option value="https://678069.xyz">678069.xyz（当前）</option>
+              <option value="https://678064.xyz">678064.xyz</option>
               <option value="https://678063.xyz">678063.xyz</option>
               <option value="https://678060.xyz">678060.xyz</option>
             </select>

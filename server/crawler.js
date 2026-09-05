@@ -11,9 +11,9 @@ import { parseM3u } from '../src/lib/m3u.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // 壳域名池（站点会轮换域名；抓详情时自动尝试池内可用域名）
-export const DOMAINS = ['678060.xyz', '678063.xyz', '678064.xyz']
+export const DOMAINS = ['678069.xyz', '678060.xyz', '678063.xyz', '678064.xyz']
 export const ALLOWED_CRAWL_BASES = DOMAINS.map((d) => `https://${d}`)
-export const DEFAULT_BASE = process.env.CRAWL_BASE || 'https://678064.xyz'
+export const DEFAULT_BASE = process.env.CRAWL_BASE || 'https://678069.xyz'
 
 const BROWSER_CANDIDATES = [
   process.env.BROWSER_PATH,
@@ -50,6 +50,11 @@ async function collectVodLinks(page, base, keyword, limit) {
   for (let p = 1; p <= 8 && links.length < limit; p += 1) {
     const url = p === 1 ? searchUrl : `${searchUrl}&page=${p}`
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {})
+    // 壳域名失效保护：若搜索页被重定向（跳到首页/换域名丢失 wd），立即报错提示
+    const curUrl = page.url()
+    if (p === 1 && !curUrl.includes('/vodsearch/')) {
+      throw new Error(`搜索页被重定向（${curUrl.slice(0, 60)}），站点可能更换了域名，请在站点列表中改用可用域名`)
+    }
     await page.waitForTimeout(700)
     for (let i = 0; i < 5; i += 1) {
       await page.mouse.wheel(0, 1800)
