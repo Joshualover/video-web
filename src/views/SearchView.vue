@@ -174,7 +174,9 @@ function describeResult(r) {
   if (!r) return '完成'
   if (r.mode === 'merge') {
     const groupNote = r.groupExisted ? `已有分组「${r.group}」` : `新建分组「${r.group}」`
-    return `并入 ${r.file}（${groupNote}）：新增 ${r.added} 条，去重 ${r.dup} 条`
+    const parts = [`并入 ${r.file}（${groupNote}）：新增 ${r.added} 条`]
+    if (r.removed > 0) parts.push(`以新代旧移除 ${r.removed} 条`)
+    return parts.join('，')
   }
   return `已生成 data/${r.file}，共 ${r.count} 条`
 }

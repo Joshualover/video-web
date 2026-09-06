@@ -321,33 +321,43 @@ function extractCode(name) {
   return m ? m[1].toUpperCase() : ''
 }
 
-// 把条目并入目标 m3u：
+// 把条目并入目标 m3u（以新代旧）：
 // - 组 = group；目标文件已有同名分组时并入同组并续编号，否则新建分组
-// - 去重：URL 相同、或同番号（同一部作品的不同条目/清晰度）均只保留一条
+// - 与目标文件中重复的（同 URL 或同番号，可能位于其他旧分组）旧条目会被删除，
+//   保留抓取到的新链接并加入当前分组，保证同一作品只留最新一条
+// - 本批内重复（多清晰度/重复条目）仍只保留第一条
+// 返回 { added, removed, total, groupCount, groupExisted }
 export function mergeIntoM3u(filePath, group, items) {
   const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : ''
-  const channels = raw.trim()
-    ? parseM3u(raw).channels.map((c) => ({ ...c }))
-    : []
+  let channels = raw.trim() ? parseM3u(raw).channels.map((c) => ({ ...c })) : []
   const groupExisted = channels.some((c) => c.group === group)
   const vUrls = new Set(channels.map((c) => c.url))
   const vCodes = new Set(channels.map((c) => extractCode(c.name)).filter(Boolean))
   const exist = channels.filter((c) => c.group === group)
   let next = exist.length ? Math.max(...exist.map((c) => parseInt(c.name, 10) || 0), 0) + 1 : 1
   let added = 0
-  let dup = 0
+  let removed = 0
   const batchCodes = new Set()
   for (const it of items) {
     const title = String(it.title || '未命名')
-    if (!it.url || vUrls.has(it.url)) {
-      dup += 1
-      continue
-    }
-    // 同番号去重：目标文件中已有，或本批内已出现过（多清晰度/重复条目）
+    if (!it.url) continue
     const code = extractCode(title)
-    if (code && (vCodes.has(code) || batchCodes.has(code))) {
-      dup += 1
-      continue
+    // 本批内已加过同番号 → 跳过（不重复添加）
+    if (code && batchCodes.has(code)) continue
+    // 找到目标文件中与新条目重复的旧条目（同 URL 或同番号，任意分组）并删除
+    const dupOld = channels.filter(
+      (c) => c.url === it.url || (code && extractCode(c.name) === code)
+    )
+    if (dupOld.length) {
+      const removedSet = new Set(dupOld)
+      removed += dupOld.length
+      channels = channels.filter((c) => !removedSet.has(c))
+      // 同步去重索引
+      dupOld.forEach((c) => {
+        vUrls.delete(c.url)
+        const oldCode = extractCode(c.name)
+        if (oldCode) vCodes.delete(oldCode)
+      })
     }
     if (code) {
       vCodes.add(code)
@@ -383,7 +393,7 @@ export function mergeIntoM3u(filePath, group, items) {
   writeFileSync(filePath, lines.join('\n') + '\n', 'utf8')
   return {
     added,
-    dup,
+    removed,
     total: channels.length,
     groupCount: new Set(channels.map((c) => c.group)).size,
     groupExisted,
