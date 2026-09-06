@@ -4,7 +4,8 @@
 //   API: 由 server/index.js 导入 searchSite()
 //   CLI: node server/crawler.js 佐佐木纱希 30
 import { chromium } from 'playwright-core'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseM3u } from '../src/lib/m3u.js'
@@ -28,10 +29,48 @@ const BROWSER_CANDIDATES = [
   '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
 ].filter(Boolean)
 
+// 查找 playwright-core install chromium 下载的内核（各平台缓存目录/目录结构）
+function findPlaywrightBrowser() {
+  const bases = []
+  if (process.env.LOCALAPPDATA) bases.push(path.join(process.env.LOCALAPPDATA, 'ms-playwright'))
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH) bases.push(process.env.PLAYWRIGHT_BROWSERS_PATH)
+  bases.push(path.join(os.homedir(), '.cache', 'ms-playwright'))
+  bases.push('/root/.cache/ms-playwright')
+  bases.push('/ms-playwright')
+  const candidates = [
+    ['chrome-linux', 'chrome'],
+    ['chrome-linux64', 'chrome'],
+    ['chrome-headless-shell-linux64', 'chrome-headless-shell'],
+    ['chrome-headless-shell-linux', 'chrome-headless-shell'],
+    ['chrome-win', 'chrome.exe'],
+    ['chrome-win64', 'chrome.exe'],
+    ['chrome-mac', 'Chromium.app/Contents/MacOS/Chromium']
+  ]
+  for (const base of bases) {
+    let entries
+    try {
+      entries = readdirSync(base, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue
+      const dir = path.join(base, e.name)
+      for (const [sub, exec] of candidates) {
+        const p = path.join(dir, sub, exec)
+        if (existsSync(p)) return p
+      }
+    }
+  }
+  return null
+}
+
 export function findBrowser() {
   for (const p of BROWSER_CANDIDATES) {
     if (p && existsSync(p)) return p
   }
+  const pw = findPlaywrightBrowser()
+  if (pw) return pw
   return null
 }
 

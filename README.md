@@ -70,18 +70,25 @@ npm run dev
 ## 部署要求（搜片功能）
 
 「站内搜片」需要**真实浏览器内核**（站点反爬校验 TLS 指纹，curl 会被拒）：
-- Windows：自动使用本机 Edge/Chrome
-- Linux 服务器：安装浏览器并设置路径：
+- Windows：自动使用本机 Edge/Chrome，无需配置
+- Linux 服务器：任选其一
 
 ```bash
-# 任选其一：
-# 1) 系统安装 Chromium 并指定
-BROWSER_PATH=/usr/bin/chromium npm start
-# 2) 使用 playwright 自带内核
-npm i -D playwright-core && npx playwright-core install chromium
+# 方式一（推荐）：用 playwright 安装 chromium，crawler 会自动找到，无需设路径
+cd /opt/video-web
+npm i playwright-core
+npx playwright-core install chromium --with-deps   # --with-deps 自动装系统依赖（需 root）
+
+# 方式二：系统包安装后设置 BROWSER_PATH
+# Debian/Ubuntu: apt install -y chromium && BROWSER_PATH=/usr/bin/chromium
 ```
 
-首次使用搜片前请确认浏览器可用（`node -e "import('./server/crawler.js').then(m=>console.log(m.findBrowser()))"`）。
+验证是否可用：
+```bash
+node -e "import('./server/crawler.js').then(m=>console.log('浏览器:', m.findBrowser()))"
+```
+
+> `playwright-core` 与系统包二选一即可；crawler 会依次探测 `BROWSER_PATH` → 系统 Chrome/Chromium → playwright 缓存目录。
 
 ## Vercel 一键部署
 
