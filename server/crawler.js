@@ -12,9 +12,9 @@ import { parseM3u } from '../src/lib/m3u.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // 壳域名池（站点会轮换域名；抓详情时自动尝试池内可用域名）
-export const DOMAINS = ['678069.xyz', '678060.xyz', '678063.xyz', '678064.xyz']
+export const DOMAINS = ['678074.xyz', '678069.xyz', '678060.xyz', '678063.xyz', '678064.xyz']
 export const ALLOWED_CRAWL_BASES = DOMAINS.map((d) => `https://${d}`)
-export const DEFAULT_BASE = process.env.CRAWL_BASE || 'https://678069.xyz'
+export const DEFAULT_BASE = process.env.CRAWL_BASE || 'https://678074.xyz'
 
 const BROWSER_CANDIDATES = [
   process.env.BROWSER_PATH,
