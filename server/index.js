@@ -8,7 +8,7 @@ import {
   proxyFetch,
   tokenAllowed
 } from './proxy-core.js'
-import { collectOnly, crawlAndSave, ALLOWED_CRAWL_BASES } from './crawler.js'
+import { collectOnly, crawlAndSave, isAllowedBase, getCrawlBases } from './crawler.js'
 
 const app = express()
 const PORT = Number(process.env.PORT) || 8787
@@ -129,6 +129,12 @@ app.post(
   }
 )
 
+// 站点可用域名列表（含自动发现的新域名）
+app.get('/api/crawl-domains', assertProxyToken, (_req, res) => {
+  const bases = getCrawlBases()
+  res.json({ bases, current: bases[0] || '' })
+})
+
 // ---- 站内搜索 / 抓取任务（两阶段） ----
 const crawlTasks = new Map()
 let crawlRunning = false
@@ -148,7 +154,7 @@ app.post('/api/site-search', assertProxyToken, async (req, res) => {
   if (!wd || wd.length > 50) {
     return res.status(400).json({ error: '请输入 1-50 字关键词' })
   }
-  if (!ALLOWED_CRAWL_BASES.includes(base)) {
+  if (!isAllowedBase(base)) {
     return res.status(400).json({ error: '站点地址不在支持范围' })
   }
   if (crawlRunning) {
@@ -192,7 +198,7 @@ app.post('/api/site-crawl', assertProxyToken, async (req, res) => {
   const items = rawItems
     .filter((it) => it && typeof it.href === 'string' && it.href.startsWith('/') && it.href.length < 120)
     .map((it) => ({ title: String(it.title || '').slice(0, 150), href: it.href }))
-  if (!ALLOWED_CRAWL_BASES.includes(base)) {
+  if (!isAllowedBase(base)) {
     return res.status(400).json({ error: '站点地址不在支持范围' })
   }
   if (!items.length) {

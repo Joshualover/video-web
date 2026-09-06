@@ -23,7 +23,8 @@ const playlistStore = usePlaylistStore()
 const uiStore = useUiStore()
 
 const keyword = ref('')
-const base = ref('https://678074.xyz')
+const base = ref('')
+const crawlBases = ref([])
 
 // 阶段一：搜索结果
 const searching = ref(false)
@@ -198,8 +199,19 @@ function resetAll() {
   activeTask = null
 }
 
-onMounted(() => {
+onMounted(async () => {
   playlistStore.fetchServerFiles()
+  try {
+    const resp = await fetch('/api/crawl-domains')
+    const data = await resp.json().catch(() => ({}))
+    if (Array.isArray(data.bases) && data.bases.length) {
+      crawlBases.value = data.bases
+      base.value = data.current || data.bases[0]
+    }
+  } catch {
+    // 接口不可用时使用默认
+  }
+  if (!base.value) base.value = 'https://678069.xyz'
 })
 
 onBeforeUnmount(() => {
@@ -233,11 +245,9 @@ onBeforeUnmount(() => {
           <label class="opt-field">
             站点
             <select v-model="base" :disabled="searching || crawlRunning">
-              <option value="https://678074.xyz">678074.xyz（当前）</option>
-              <option value="https://678069.xyz">678069.xyz</option>
-              <option value="https://678064.xyz">678064.xyz</option>
-              <option value="https://678063.xyz">678063.xyz</option>
-              <option value="https://678060.xyz">678060.xyz</option>
+              <option v-for="(b, i) in crawlBases" :key="b" :value="b">
+                {{ b.replace('https://', '') }}{{ i === 0 ? '（当前）' : '' }}
+              </option>
             </select>
           </label>
           <button

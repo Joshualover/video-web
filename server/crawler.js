@@ -4,17 +4,94 @@
 //   API: 由 server/index.js 导入 searchSite()
 //   CLI: node server/crawler.js 佐佐木纱希 30
 import { chromium } from 'playwright-core'
-import { existsSync, readFileSync, writeFileSync, readdirSync } from 'node:fs'
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  readdirSync,
+  mkdirSync
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseM3u } from '../src/lib/m3u.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-// 壳域名池（站点会轮换域名；抓详情时自动尝试池内可用域名）
-export const DOMAINS = ['678074.xyz', '678069.xyz', '678060.xyz', '678063.xyz', '678064.xyz']
-export const ALLOWED_CRAWL_BASES = DOMAINS.map((d) => `https://${d}`)
-export const DEFAULT_BASE = process.env.CRAWL_BASE || 'https://678074.xyz'
+const DOMAIN_FILE = path.resolve(__dirname, '../data/crawl-domains.json')
+
+// 内置壳域名（站点会轮换域名；发现新域名后自动加入并持久化到 data/crawl-domains.json）
+const BUILTIN_DOMAINS = ['678074.xyz', '678069.xyz', '678060.xyz', '678063.xyz', '678064.xyz']
+
+function isValidDomain(host) {
+  return (
+    typeof host === 'string' &&
+    /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host) &&
+    !/^\d{1,3}(\.\d{1,3}){3}$/.test(host) // 拒绝裸 IP，防 SSRF
+  )
+}
+
+function loadExtraDomains() {
+  try {
+    const j = JSON.parse(readFileSync(DOMAIN_FILE, 'utf8'))
+    return Array.isArray(j.domains)
+      ? j.domains.filter((d) => typeof d === 'string' && isValidDomain(d)).map((d) => d.toLowerCase())
+      : []
+  } catch {
+    return []
+  }
+}
+
+// 域名池：内置 + 历史发现（内存态）
+const domainPool = [...new Set([...BUILTIN_DOMAINS, ...loadExtraDomains()])]
+let preferredBase = null // 最近一次成功的详情域名，优先尝试
+
+export function getCrawlBases() {
+  return domainPool.map((d) => `https://${d}`)
+}
+
+export function isAllowedBase(base) {
+  return getCrawlBases().includes(String(base || '').replace(/\/+$/, ''))
+}
+
+export const DEFAULT_BASE = process.env.CRAWL_BASE || getCrawlBases()[0]
+
+// 记录站点重定向时发现的新域名（内存 + 持久化）
+export function addDiscoveredDomain(rawUrl) {
+  try {
+    const u = new URL(rawUrl)
+    const host = u.hostname.toLowerCase()
+    if (!isValidDomain(host)) return null
+    if (domainPool.includes(host)) return host
+    domainPool.push(host)
+    try {
+      mkdirSync(path.dirname(DOMAIN_FILE), { recursive: true })
+      writeFileSync(
+        DOMAIN_FILE,
+        JSON.stringify(
+          { domains: domainPool.filter((d) => !BUILTIN_DOMAINS.includes(d)), updatedAt: Date.now() },
+          null,
+          2
+        ),
+        'utf8'
+      )
+    } catch {
+      /* 持久化失败不影响本次使用 */
+    }
+    return host
+  } catch {
+    return null
+  }
+}
+
+function expandBases(base) {
+  const list = [String(base || '').replace(/\/+$/, '')]
+  // 最近成功域名优先，减少无效重试
+  if (preferredBase && preferredBase !== list[0]) list.push(preferredBase)
+  for (const b of getCrawlBases()) {
+    if (!list.includes(b)) list.push(b)
+  }
+  return list
+}
 
 const BROWSER_CANDIDATES = [
   process.env.BROWSER_PATH,
@@ -81,18 +158,24 @@ function sanitizeName(name) {
     .slice(0, 40) || 'unnamed'
 }
 
-// 收集搜索结果（支持翻页）
-async function collectVodLinks(page, base, keyword, limit) {
+// 收集搜索结果（支持翻页；搜索页被重定向时自动发现新域名并重试一次）
+async function collectVodLinks(page, base, keyword, limit, retried = false) {
   const links = []
   const seen = new Set()
   const searchUrl = `${base}/vodsearch/-------------.html?wd=${encodeURIComponent(keyword)}&submit=`
   for (let p = 1; p <= 8 && links.length < limit; p += 1) {
     const url = p === 1 ? searchUrl : `${searchUrl}&page=${p}`
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {})
-    // 壳域名失效保护：若搜索页被重定向（跳到首页/换域名丢失 wd），立即报错提示
+    // 壳域名失效保护：若搜索页被重定向（跳到首页/换域名丢失 wd）
     const curUrl = page.url()
     if (p === 1 && !curUrl.includes('/vodsearch/')) {
-      throw new Error(`搜索页被重定向（${curUrl.slice(0, 60)}），站点可能更换了域名，请在站点列表中改用可用域名`)
+      const newHost = addDiscoveredDomain(curUrl)
+      const newBase = newHost ? `https://${newHost}` : null
+      if (newBase && newBase !== base && !retried) {
+        console.log(`[crawler] 搜索被重定向，自动切换到新域名 ${newHost}`)
+        return collectVodLinks(page, newBase, keyword, limit, true)
+      }
+      throw new Error(`搜索页被重定向（${curUrl.slice(0, 60)}），站点可能更换了域名，已自动记录可稍后重试`)
     }
     await page.waitForTimeout(700)
     for (let i = 0; i < 5; i += 1) {
@@ -129,10 +212,11 @@ async function collectVodLinks(page, base, keyword, limit) {
   return links.slice(0, limit)
 }
 
-// 详情页模拟解锁接口拿 m3u8（在多个候选域名间尝试，跳过被重定向/无效的壳）
+// 详情页模拟解锁接口拿 m3u8（在多个候选域名间尝试，记录最近成功域名优先）
 async function fetchOne(page, bases, href) {
   for (const base of bases) {
-    await page.goto(base + href, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
+    const host = String(base || '').replace(/^https?:\/\//, '').split('/')[0]
+    await page.goto(base + href, { waitUntil: 'domcontentloaded', timeout: 12000 }).catch(() => {})
     const r = await page
       .evaluate(async () => {
         const h1 = (document.querySelector('h1')?.textContent || document.title)
@@ -166,18 +250,12 @@ async function fetchOne(page, bases, href) {
         return { noAk: true }
       })
       .catch(() => ({ noAk: true }))
-    if (!r.noAk) return r
+    if (!r.noAk) {
+      preferredBase = `https://${host}` // 记住成功域名
+      return r
+    }
   }
   return { title: href, err: 'fail' }
-}
-
-function expandBases(base) {
-  const list = [String(base || '').replace(/\/+$/, '')]
-  for (const d of DOMAINS) {
-    const u = `https://${d}`
-    if (!list.includes(u)) list.push(u)
-  }
-  return list
 }
 
 // 生成 m3u 内容（组 = 关键词，条目命名 = 序号+标题）
