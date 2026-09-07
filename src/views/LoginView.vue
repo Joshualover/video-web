@@ -70,8 +70,6 @@ function submit() {
           <LogIn :size="17" /> {{ loading ? '登录中...' : '登 录' }}
         </button>
       </form>
-
-      <p class="login-hint">默认账号 admin，默认密码 admin123（可在设置页修改）</p>
     </div>
   </div>
 </template>
