@@ -1,8 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  ArrowLeft,
   CheckSquare,
   CheckCircle2,
   FilePlus2,
@@ -12,11 +11,11 @@ import {
   RefreshCw,
   Search,
   Sparkles,
-  Square,
   XCircle
 } from 'lucide-vue-next'
 import { usePlaylistStore } from '../stores/playlist'
 import { useUiStore } from '../stores/ui'
+import { parseM3u } from '../lib/m3u'
 
 const router = useRouter()
 const playlistStore = usePlaylistStore()
@@ -35,13 +34,37 @@ const searchInfo = ref('')
 // 阶段二：抓取
 const mode = ref('merge') // 'merge' | 'new'
 const mergeTarget = ref('')
+const groupInput = ref('') // 并入分组名（可输入或从目标文件分组中选择）
+const fileGroups = ref([]) // 目标文件现有分组（供 datalist）
 const crawlRunning = ref(false)
 const progress = ref({ done: 0, total: 0, current: '' })
-const result = ref(null) // {mode, file, group, added/dup/count...}
+const result = ref(null)
 const error = ref('')
 
 let pollTimer = null
 let activeTask = null
+
+// 关键词变化时，默认分组 = 关键词（新建分组）
+watch(keyword, (k) => {
+  const clean = String(k || '').trim()
+  if (clean && (!groupInput.value || fileGroups.value.includes(groupInput.value))) {
+    groupInput.value = clean
+  }
+})
+
+// 选择目标文件后读取其现有分组
+watch(mergeTarget, async (name) => {
+  fileGroups.value = []
+  if (!name || mode.value !== 'merge') return
+  try {
+    const resp = await fetch(`/api/playlists/content?name=${encodeURIComponent(name)}`)
+    if (!resp.ok) return
+    const text = await resp.text()
+    fileGroups.value = parseM3u(text).groups || []
+  } catch {
+    fileGroups.value = []
+  }
+})
 
 const serverFiles = computed(() => playlistStore.serverFiles)
 
@@ -109,7 +132,7 @@ async function startCrawl() {
       body: JSON.stringify({
         wd: keyword.value.trim(),
         base: base.value,
-        group: keyword.value.trim(),
+        group: String(groupInput.value || keyword.value).trim().slice(0, 30) || keyword.value.trim(),
         mode: mode.value,
         target: mode.value === 'merge' ? mergeTarget.value : '',
         items
@@ -305,8 +328,23 @@ onBeforeUnmount(() => {
             <label v-if="mode === 'merge'" class="opt-field">
               目标文件
               <select v-model="mergeTarget" :disabled="crawlRunning">
+                <option value="" disabled>选择要并入的文件...</option>
                 <option v-for="f in serverFiles" :key="f.name" :value="f.name">{{ f.name }}</option>
               </select>
+            </label>
+            <label v-if="mode === 'merge'" class="opt-field group-input">
+              并入分组
+              <input
+                v-model="groupInput"
+                list="group-options"
+                placeholder="输入或选择分组名"
+                aria-label="并入分组名"
+                :disabled="crawlRunning"
+              />
+              <datalist id="group-options">
+                <option v-for="g in fileGroups" :key="g" :value="g"></option>
+              </datalist>
+              <span v-if="fileGroups.length" class="opt-hint">可选 {{ fileGroups.length }} 个现有分组</span>
             </label>
             <span v-if="mode === 'new'" class="opt-hint">将生成 data/{{ keyword.trim() || '关键词' }}.m3u</span>
           </div>

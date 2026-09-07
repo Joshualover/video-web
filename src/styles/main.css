@@ -631,6 +631,21 @@ input::placeholder {
   color: var(--text);
 }
 
+.group-input input {
+  width: 190px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.group-input input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
 .search-results {
   margin-top: 18px;
 }
