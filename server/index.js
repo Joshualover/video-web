@@ -14,12 +14,17 @@ import {
   getSources,
   resolveSource,
   checkSources,
+  checkSource,
   markHealth,
   sourcesWithHealth,
+  spreadByGroup,
+  activeSources,
   getConfigStatus,
   refreshConfigs,
   invalidateSources
 } from './vod/sources.js'
+import { setSourceEnabled } from './vod/source-prefs.js'
+import { proxyStatus } from './net.js'
 import { resolveMediaUrl, handleHlsProxy, isHttpUrl } from './vod/hls.js'
 import { listConfigs, addConfig, updateConfig, removeConfig } from './vod/config-store.js'
 import { findBestLines } from './vod/best.js'
@@ -219,11 +224,37 @@ app.get('/api/vod/sources', async (req, res) => {
         autoRefreshHours: vodRefreshState.intervalHours,
         lastRefreshAt: vodRefreshState.lastAt,
         refreshing: vodRefreshState.running,
-        lastError: vodRefreshState.error
+        lastError: vodRefreshState.error,
+        proxy: proxyStatus()
       }
     })
   } catch (err) {
     vodError(res, err, '加载影视源失败')
+  }
+})
+
+// 单个源的启用/停用（源级偏好，持久化到 data/vod-source-prefs.json）
+app.put('/api/vod/sources/:id', async (req, res) => {
+  try {
+    const source = await resolveSource(String(req.params.id))
+    if (!source) return res.status(404).json({ error: '源不存在' })
+    const enabled = req.body?.enabled !== false
+    await setSourceEnabled(source.id, enabled)
+    res.json({ ok: true, id: source.id, enabled })
+  } catch (err) {
+    vodError(res, err, '设置源状态失败')
+  }
+})
+
+// 单个源健康检测（源管理页「测试」按钮）
+app.post('/api/vod/sources/:id/check', async (req, res) => {
+  try {
+    const source = await resolveSource(String(req.params.id))
+    if (!source) return res.status(404).json({ error: '源不存在' })
+    const result = await checkSource(source)
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    vodError(res, err, '检测源失败')
   }
 })
 
@@ -375,11 +406,12 @@ app.get('/api/vod/search', async (req, res) => {
       .map((s) => s.trim())
       .filter(Boolean)
     let targets = requested.length
-      ? all.filter((s) => requested.includes(s.id))
-      : sourcesWithHealth(all)
-          .filter((s) => s.status !== 'fail')
-          .slice(0, 14)
-    if (!targets.length) targets = all.slice(0, 8)
+      ? activeSources(all).filter((s) => requested.includes(s.id))
+      : spreadByGroup(
+          activeSources(sourcesWithHealth(all)).filter((s) => s.status !== 'fail'),
+          14
+        )
+    if (!targets.length) targets = spreadByGroup(activeSources(all), 8)
 
     const settled = await Promise.allSettled(
       targets.map(async (source) => {

@@ -3,6 +3,7 @@
 // 不接受客户端直接传入任意 URL，避免 SSRF。
 import http from 'node:http'
 import https from 'node:https'
+import { agentFor } from '../net.js'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
@@ -27,6 +28,7 @@ export function httpGetText(rawUrl, { timeout = 12000, maxRedirects = 4, headers
       url,
       {
         rejectUnauthorized: false,
+        agent: agentFor(url),
         headers: {
           'User-Agent': UA,
           Accept: '*/*',
@@ -106,6 +108,23 @@ export function parsePlayFrom(from) {
     .filter(Boolean)
 }
 
+// 播放地址清洗：
+//  - 部分源把地址整体做了 URL 编码（https%3A%2F%2F...）
+//  - 部分源在地址后追加播放器参数（url|||eyJhbGci...），那一段是给播放器用的，取前面真正的地址
+export function normalizePlayUrl(url) {
+  let out = String(url || '').trim()
+  if (/^https?%3a/i.test(out)) {
+    try {
+      out = decodeURIComponent(out)
+    } catch {
+      // 解码失败则保持原样
+    }
+  }
+  const bar = out.indexOf('|||')
+  if (bar > 0) out = out.slice(0, bar)
+  return out
+}
+
 // vod_play_url: "第1集$url#第2集$url$$$线路2..."
 export function parsePlayUrl(play) {
   return String(play || '')
@@ -117,8 +136,8 @@ export function parsePlayUrl(play) {
         .filter(Boolean)
         .map((item) => {
           const idx = item.indexOf('$')
-          if (idx < 0) return { name: item, url: item }
-          return { name: item.slice(0, idx), url: item.slice(idx + 1) }
+          if (idx < 0) return { name: item, url: normalizePlayUrl(item) }
+          return { name: item.slice(0, idx), url: normalizePlayUrl(item.slice(idx + 1)) }
         })
         .filter((ep) => /^https?:\/\//i.test(ep.url))
     )
@@ -170,9 +189,21 @@ export async function fetchList(api, { typeId, page = 1, wd, hours } = {}, opts 
 }
 
 export async function fetchDetail(api, id, opts = {}) {
-  const text = await httpGetText(buildUrl(api, { ac: 'videolist', ids: id }), opts)
-  const data = parseJsonLoose(text)
-  const list = Array.isArray(data?.list) ? data.list : []
-  if (!list.length) return null
-  return normalizeVideo(list[0])
+  // 苹果 CMS V10 的标准详情参数是 ac=detail；一部分源（尤其是多仓订阅下发的接口）只认这个，
+  // 而另一部分老源只认 ac=videolist&ids。两种都试，优先取能给出剧集地址的那个。
+  let fallback = null
+  for (const ac of ['detail', 'videolist']) {
+    try {
+      const text = await httpGetText(buildUrl(api, { ac, ids: id }), opts)
+      const data = parseJsonLoose(text)
+      const list = Array.isArray(data?.list) ? data.list : []
+      const video = list.length ? normalizeVideo(list[0]) : null
+      if (!video) continue
+      if (video.playUrl.length) return video
+      if (!fallback) fallback = video
+    } catch {
+      // 换下一种详情参数
+    }
+  }
+  return fallback
 }

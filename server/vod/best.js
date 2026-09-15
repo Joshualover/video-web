@@ -1,6 +1,6 @@
 // 多源同片「自动选最快线路」：
 //  搜索所有可用源 → 找到同名影片 → 取首个剧集地址 → 实测延迟 → 按「可用优先、延迟升序」排序
-import { getSources, sourcesWithHealth, mapLimit } from './sources.js'
+import { getSources, sourcesWithHealth, spreadByGroup, activeSources, mapLimit } from './sources.js'
 import { fetchList, fetchDetail } from './maccms.js'
 import { probeMediaUrl } from './hls.js'
 
@@ -26,8 +26,9 @@ export async function findBestLines({ wd, year = '', limit = 8, probe = true, ma
   if (cached && Date.now() - cached.at < CACHE_TTL) return cached.data
 
   const all = await getSources()
-  const ranked = sourcesWithHealth(all).filter((s) => s.status !== 'fail')
-  const targets = (ranked.length ? ranked : all).slice(0, maxSources)
+  const ranked = activeSources(sourcesWithHealth(all)).filter((s) => s.status !== 'fail')
+  // 按分组轮流取源，避免一个多仓订阅把选路名额占满
+  const targets = spreadByGroup(ranked.length ? ranked : activeSources(all), maxSources)
 
   // 1) 并发搜索，收集同名结果
   const found = []

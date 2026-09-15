@@ -4,6 +4,7 @@
 import http from 'node:http'
 import https from 'node:https'
 import { httpGetText } from './maccms.js'
+import { agentFor } from '../net.js'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
@@ -97,6 +98,7 @@ function probeOnce(url, timeout) {
       url,
       {
         rejectUnauthorized: false,
+        agent: agentFor(url),
         headers: {
           'User-Agent': UA,
           Accept: '*/*',
@@ -164,7 +166,7 @@ export function handleHlsProxy(req, res) {
 
   const upstream = lib.get(
     url,
-    { rejectUnauthorized: false, headers, timeout: 20000 },
+    { rejectUnauthorized: false, agent: agentFor(url), headers, timeout: 20000 },
     (remote) => {
       const contentType = remote.headers['content-type'] || ''
       const isPlaylist =

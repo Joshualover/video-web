@@ -33,6 +33,12 @@ export const useVodStore = defineStore('vod', {
     healthySources(state) {
       return state.sources.filter((s) => s.status === 'ok')
     },
+    enabledSources(state) {
+      return state.sources.filter((s) => s.enabled !== false)
+    },
+    disabledSourceCount(state) {
+      return state.sources.filter((s) => s.enabled === false).length
+    },
     sourceGroups(state) {
       const map = new Map()
       for (const s of state.sources) {
@@ -93,10 +99,12 @@ export const useVodStore = defineStore('vod', {
         this.sources = Array.isArray(sources) ? sources : []
         if (meta) this.sourcesMeta = meta
         if (check) this.healthChecked = true
-        if (!this.activeSiteId || !this.sources.some((s) => s.id === this.activeSiteId)) {
+        if (!this.activeSiteId || !this.sources.some((s) => s.id === this.activeSiteId && s.enabled !== false)) {
+          const usable = this.sources.filter((s) => s.enabled !== false)
           const preferred =
-            this.sources.find((s) => s.status === 'ok') ||
-            this.sources.find((s) => s.status !== 'fail') ||
+            usable.find((s) => s.status === 'ok') ||
+            usable.find((s) => s.status !== 'fail') ||
+            usable[0] ||
             this.sources[0]
           this.setActiveSite(preferred?.id || '')
         }
@@ -276,6 +284,37 @@ export const useVodStore = defineStore('vod', {
       } finally {
         this.configsLoading = false
       }
+    },
+
+    // ---- 源级启停 / 单源检测 ----
+    async setSourceEnabled(id, enabled) {
+      await vodApi.setSourceEnabled(id, enabled)
+      const item = this.sources.find((s) => s.id === id)
+      if (item) item.enabled = enabled
+      // 当前正在用的源被停用时，切到一个可用的源，避免继续用它浏览
+      if (!enabled && this.activeSiteId === id) {
+        const next =
+          this.sources.find((s) => s.enabled !== false && s.status === 'ok') ||
+          this.sources.find((s) => s.enabled !== false)
+        if (next) this.setActiveSite(next.id)
+      }
+      return enabled
+    },
+
+    async checkSource(id) {
+      const result = await vodApi.checkSource(id)
+      const item = this.sources.find((s) => s.id === id)
+      if (item) {
+        item.status = result.status === 'ok' ? 'ok' : 'fail'
+        if (result.status === 'ok') {
+          item.latency = result.latency
+          item.classes = result.classes
+          item.error = ''
+        } else {
+          item.error = result.error || '不可用'
+        }
+      }
+      return result
     }
   }
 })

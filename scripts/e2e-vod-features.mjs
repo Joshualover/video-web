@@ -32,8 +32,21 @@ await step('影视导航可见', async () => {
 })
 
 await step('详情页收藏', async () => {
-  await page.locator('.vod-card').first().click()
-  await page.waitForSelector('.vod-episode', { timeout: 30000 })
+  // 影视源里总有条目没有可播剧集（B 站类/听书类源），所以挨个卡片试，直到找到有剧集的
+  const cards = page.locator('.vod-card')
+  const total = Math.min(await cards.count(), 6)
+  let opened = false
+  for (let i = 0; i < total; i += 1) {
+    if (i > 0) await page.goBack({ waitUntil: 'domcontentloaded' })
+    await cards.nth(i).click()
+    opened = await page
+      .waitForSelector('.vod-episode', { timeout: 12000 })
+      .then(() => true)
+      .catch(() => false)
+    if (opened) break
+    console.log('     第 ' + (i + 1) + ' 个卡片无剧集，换下一个')
+  }
+  if (!opened) throw new Error('前 ' + total + ' 个卡片都没有可播剧集')
   detailUrl = page.url()
   const favBtn = page.locator('.vod-detail-info .btn', { hasText: '收藏' })
   await favBtn.first().click()

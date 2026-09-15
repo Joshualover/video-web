@@ -6,9 +6,12 @@ import {
   FolderCog,
   Loader2,
   Pencil,
+  Play,
   Plus,
+  Power,
   RefreshCw,
   Server,
+  ShieldCheck,
   Trash2,
   X
 } from 'lucide-vue-next'
@@ -26,6 +29,53 @@ const refreshingId = ref('')
 const editingId = ref('')
 const editForm = reactive({ name: '', group: '' })
 const error = ref('')
+const testingId = ref('')
+const togglingId = ref('')
+
+// 源级列表：按分组展示，可逐个启停/测速
+const sourceGroups = computed(() => {
+  const map = new Map()
+  for (const s of vodStore.sources) {
+    const key = s.group || '默认配置'
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(s)
+  }
+  return [...map.entries()].map(([group, sources]) => ({ group, sources }))
+})
+
+const proxyText = computed(() => {
+  const proxy = vodStore.sourcesMeta?.proxy
+  if (!proxy?.enabled) return '出网代理：未启用（设置 VOD_HTTP_PROXY 可代理抓取与播放）'
+  return `出网代理：${proxy.url}${proxy.noProxy?.length ? ' · 直连 ' + proxy.noProxy.join(' / ') : ''}`
+})
+
+async function toggleSource(item) {
+  togglingId.value = item.id
+  error.value = ''
+  try {
+    const next = item.enabled === false
+    await vodStore.setSourceEnabled(item.id, next)
+    uiStore.toast(next ? `已启用「${item.name}」` : `已停用「${item.name}」，不再参与搜索与选路`, 'success')
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    togglingId.value = ''
+  }
+}
+
+async function testSource(item) {
+  testingId.value = item.id
+  error.value = ''
+  try {
+    const result = await vodStore.checkSource(item.id)
+    if (result.status === 'ok') uiStore.toast(`「${item.name}」可用，延迟 ${result.latency} ms`, 'success')
+    else uiStore.toast(`「${item.name}」不可用：${result.error || '未知错误'}`, 'warning')
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    testingId.value = ''
+  }
+}
 
 const groups = computed(() => {
   const map = new Map()
@@ -266,6 +316,90 @@ onMounted(() => {
                 <Trash2 :size="15" />
               </button>
             </div>
+          </article>
+        </div>
+      </section>
+    </div>
+
+    <div class="section-head">
+      <h2><Power :size="17" /> 源列表（按源启停）</h2>
+      <div class="vod-head-actions">
+        <span class="count-note">
+          启用 {{ vodStore.sources.length - vodStore.disabledSourceCount }} / {{ vodStore.sources.length }}
+          <template v-if="vodStore.disabledSourceCount">· 已停用 {{ vodStore.disabledSourceCount }}</template>
+        </span>
+        <button
+          class="btn btn-secondary btn-small"
+          type="button"
+          :disabled="vodStore.sourcesLoading"
+          @click="vodStore.fetchSources({ check: true })"
+        >
+          <Loader2 v-if="vodStore.sourcesLoading" class="spin" :size="14" />
+          <ShieldCheck v-else :size="14" />
+          检测全部
+        </button>
+      </div>
+    </div>
+    <p class="vod-panel-tip">
+      停用的源不会参与聚合搜索与选路（源级偏好存在服务端 <code>data/vod-source-prefs.json</code>，与配置地址无关）。{{ proxyText }}
+    </p>
+
+    <div v-if="vodStore.sourcesLoading && !vodStore.sources.length" class="vod-state">
+      <Loader2 class="spin" :size="22" /> 正在加载源列表…
+    </div>
+
+    <div v-else-if="!vodStore.sources.length" class="empty-block">
+      <Server :size="22" /> 暂无源，先添加配置地址并刷新
+    </div>
+
+    <div v-else class="vod-source-groups">
+      <section v-for="groupItem in sourceGroups" :key="groupItem.group" class="vod-source-group">
+        <div class="vod-config-group-head">
+          <span>{{ groupItem.group }}</span>
+          <span class="count-note">
+            {{ groupItem.sources.filter((s) => s.enabled !== false).length }} / {{ groupItem.sources.length }} 启用
+          </span>
+        </div>
+        <div class="vod-source-list">
+          <article
+            v-for="item in groupItem.sources"
+            :key="item.id"
+            class="vod-source-row"
+            :class="{ disabled: item.enabled === false }"
+          >
+            <span
+              class="vod-dot"
+              :class="item.status === 'ok' ? 'ok' : item.status === 'fail' ? 'fail' : 'unknown'"
+            ></span>
+            <span class="vod-source-name" :title="item.api">{{ item.name }}</span>
+            <span class="vod-source-meta">
+              <template v-if="item.status === 'ok'">
+                {{ item.latency }} ms<template v-if="item.classes"> · {{ item.classes }} 分类</template>
+              </template>
+              <template v-else-if="item.status === 'fail'">不可用：{{ item.error || '未知' }}</template>
+              <template v-else>未检测</template>
+            </span>
+            <span v-if="item.from" class="vod-source-from" :title="item.from">{{ item.from }}</span>
+            <button
+              class="icon-btn"
+              type="button"
+              :title="'测试「' + item.name + '」'"
+              :disabled="testingId === item.id"
+              @click="testSource(item)"
+            >
+              <Loader2 v-if="testingId === item.id" class="spin" :size="14" />
+              <Play v-else :size="14" />
+            </button>
+            <button
+              class="btn btn-small"
+              :class="item.enabled === false ? 'btn-primary' : 'btn-ghost'"
+              type="button"
+              :disabled="togglingId === item.id"
+              @click="toggleSource(item)"
+            >
+              <Loader2 v-if="togglingId === item.id" class="spin" :size="13" />
+              {{ item.enabled === false ? '启用' : '停用' }}
+            </button>
           </article>
         </div>
       </section>

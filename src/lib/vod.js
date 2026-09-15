@@ -41,7 +41,10 @@ export const vodApi = {
   addConfig: (body) => apiSend('/api/vod/configs', body),
   updateConfig: (id, body) => apiSend(`/api/vod/configs/${id}`, body, 'PUT'),
   removeConfig: (id) => apiSend(`/api/vod/configs/${id}`, null, 'DELETE'),
-  refreshConfigs: (id) => apiSend('/api/vod/configs/refresh', id ? { id } : {})
+  refreshConfigs: (id) => apiSend('/api/vod/configs/refresh', id ? { id } : {}),
+  // 源级启停 / 单源检测
+  setSourceEnabled: (id, enabled) => apiSend(`/api/vod/sources/${id}`, { enabled }, 'PUT'),
+  checkSource: (id) => apiSend(`/api/vod/sources/${id}/check`, {})
 }
 
 // 把分类拆成「顶级 + 子级」两层，兼容扁平分类

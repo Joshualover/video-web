@@ -1,7 +1,8 @@
 // 影视源管理：
 //  1) 配置地址来自 data/vod-configs.json（可在「源管理」页增删改、分组、启停）
 //  2) 逐个拉取 TVBox/影视仓 配置，解析出 type===1 的「苹果 CMS」站点
-//     （type=3 的 csp_ 蜘蛛源依赖 TVBox 内核，Web 端用不了，直接跳过）
+//     （type=3 的 csp_ 蜘蛛源依赖 TVBox 内核，Web 端用不了，直接跳过；
+//       部分订阅平台把同样是 http 接口的苹果 CMS 统一标成 type=4，也一并收下）
 //  3) 与内置兜底源合并、去重；带 TTL 缓存 + 健康检查缓存
 import crypto from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -9,6 +10,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { httpGetText, parseJsonLoose, fetchCategories } from './maccms.js'
 import { listConfigs } from './config-store.js'
+import { disabledSourceIds } from './source-prefs.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const FALLBACK_FILE = path.join(__dirname, 'fallback-sources.json')
@@ -73,6 +75,16 @@ async function loadFallback() {
   }
 }
 
+// 伪协议 api（蜘蛛/JS 源）需要 TVBox 内核，Web 端用不了
+const SPIDER_API_RE = /^(csp_|js:|file:|assets:|clan:|mitv:|push:)/i
+
+// 是否是 Web 端可用的苹果 CMS 站点：type=1 是标准苹果 CMS；type=4 里 api 直接给 http 接口的同样是 CMS（部分订阅平台统一标 4）
+function isCmsSite(site) {
+  const type = Number(site?.type)
+  if (type !== 1 && type !== 4) return false
+  return !SPIDER_API_RE.test(String(site?.api ?? '').trim())
+}
+
 // 解析单个配置 JSON 文本，返回站点列表
 function parseConfigSites(text, meta) {
   let data
@@ -84,7 +96,7 @@ function parseConfigSites(text, meta) {
   const sites = Array.isArray(data?.sites) ? data.sites : []
   const out = []
   for (const site of sites) {
-    if (Number(site?.type) !== 1) continue
+    if (!isCmsSite(site)) continue
     const api = normalizeApi(site?.api)
     if (!api) continue
     out.push({
@@ -186,9 +198,21 @@ async function buildSources({ force = false, onlyConfigId = null } = {}) {
   return [...seen.values()]
 }
 
+// 带上源级启停状态（不写回缓存，停用表改了立即生效）
+async function withPrefs(sources) {
+  const disabled = await disabledSourceIds()
+  if (!disabled.size) return sources.map((s) => ({ ...s, enabled: true }))
+  return sources.map((s) => ({ ...s, enabled: !disabled.has(s.id) }))
+}
+
+// 参与聚合搜索/选路的源（已停用的不参与）
+export function activeSources(sources) {
+  return sources.filter((s) => s.enabled !== false)
+}
+
 export async function getSources({ refresh = false, configId = null } = {}) {
   if (!refresh && !configId && sourcesCache && Date.now() - sourcesCache.at < SOURCES_TTL) {
-    return sourcesCache.sources
+    return withPrefs(sourcesCache.sources)
   }
   if (!loadPromise) {
     loadPromise = buildSources({ force: refresh, onlyConfigId: configId })
@@ -200,7 +224,7 @@ export async function getSources({ refresh = false, configId = null } = {}) {
         loadPromise = null
       })
   }
-  return loadPromise
+  return withPrefs(await loadPromise)
 }
 
 // 清理缓存（增删改配置后调用）
@@ -295,4 +319,29 @@ export async function checkSources(sources, { deadline = 8000, concurrency = 6 }
 
 export function sourcesWithHealth(sources) {
   return sources.map((s) => ({ ...s, ...getHealth(s.id) }))
+}
+
+// 按分组轮流取源：聚合搜索/选路只取前 N 个源，如果某个分组（例如新加的多仓订阅有 20 多个源）
+// 把名额占满，其它分组的源就永远搜不到，所以这里按分组轮询，保证每个分组都有份。
+export function spreadByGroup(sources, limit) {
+  const buckets = new Map()
+  for (const source of sources) {
+    const key = source.group || '默认配置'
+    const list = buckets.get(key)
+    if (list) list.push(source)
+    else buckets.set(key, [source])
+  }
+  const lists = [...buckets.values()]
+  const out = []
+  for (let round = 0; out.length < limit; round += 1) {
+    let added = false
+    for (const list of lists) {
+      if (round >= list.length) continue
+      out.push(list[round])
+      added = true
+      if (out.length >= limit) break
+    }
+    if (!added) break
+  }
+  return out
 }
