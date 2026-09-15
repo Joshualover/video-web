@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Clapperboard,
+  Film,
   History,
   Home,
   ListVideo,
@@ -22,6 +23,7 @@ const uiStore = useUiStore()
 
 const navItems = [
   { to: '/', label: '首页', icon: Home },
+  { to: '/vod', label: '影视', icon: Film },
   { to: '/channels', label: '频道', icon: ListVideo, disabled: computed(() => !playlistStore.playlist) },
   { to: '/favorites', label: '收藏', icon: Star },
   { to: '/recents', label: '最近', icon: History },
@@ -30,6 +32,7 @@ const navItems = [
 ]
 
 const activeName = computed(() => {
+  if (route.path.startsWith('/vod')) return '影视'
   if (route.path === '/channels' || route.path === '/player') return '频道'
   if (route.path === '/favorites') return '收藏'
   if (route.path === '/recents') return '最近'

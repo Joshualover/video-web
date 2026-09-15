@@ -8,6 +8,12 @@ import RecentsView from './views/RecentsView.vue'
 import SearchView from './views/SearchView.vue'
 import SettingsView from './views/SettingsView.vue'
 import LoginView from './views/LoginView.vue'
+import VodHomeView from './views/VodHomeView.vue'
+import VodDetailView from './views/VodDetailView.vue'
+import VodPlayerView from './views/VodPlayerView.vue'
+import VodFavoritesView from './views/VodFavoritesView.vue'
+import VodHistoryView from './views/VodHistoryView.vue'
+import VodSourcesView from './views/VodSourcesView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -19,7 +25,13 @@ const router = createRouter({
     { path: '/recents', name: 'recents', component: RecentsView },
     { path: '/search', name: 'search', component: SearchView },
     { path: '/settings', name: 'settings', component: SettingsView },
-    { path: '/login', name: 'login', component: LoginView }
+    { path: '/login', name: 'login', component: LoginView },
+    { path: '/vod', name: 'vod', component: VodHomeView },
+    { path: '/vod/favorites', name: 'vod-favorites', component: VodFavoritesView },
+    { path: '/vod/history', name: 'vod-history', component: VodHistoryView },
+    { path: '/vod/sources', name: 'vod-sources', component: VodSourcesView },
+    { path: '/vod/detail/:site/:id', name: 'vod-detail', component: VodDetailView },
+    { path: '/vod/play/:site/:id', name: 'vod-play', component: VodPlayerView }
   ],
   scrollBehavior() {
     return { top: 0 }

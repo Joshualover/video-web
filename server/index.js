@@ -9,6 +9,20 @@ import {
   tokenAllowed
 } from './proxy-core.js'
 import { collectOnly, crawlAndSave, isAllowedBase, getCrawlBases } from './crawler.js'
+import { fetchCategories, fetchList, fetchDetail } from './vod/maccms.js'
+import {
+  getSources,
+  resolveSource,
+  checkSources,
+  markHealth,
+  sourcesWithHealth,
+  getConfigStatus,
+  refreshConfigs,
+  invalidateSources
+} from './vod/sources.js'
+import { resolveMediaUrl, handleHlsProxy, isHttpUrl } from './vod/hls.js'
+import { listConfigs, addConfig, updateConfig, removeConfig } from './vod/config-store.js'
+import { findBestLines } from './vod/best.js'
 
 const app = express()
 const PORT = Number(process.env.PORT) || 8787
@@ -133,6 +147,270 @@ app.post(
 app.get('/api/crawl-domains', assertProxyToken, (_req, res) => {
   const bases = getCrawlBases()
   res.json({ bases, current: bases[0] || '' })
+})
+
+// 解析播放地址（网页播放页 → 真实 m3u8），返回可直接播放的代理地址
+app.get('/api/vod/play', async (req, res) => {
+  const raw = String(req.query.url || '')
+  if (!isHttpUrl(raw)) return res.status(400).json({ error: 'url 参数非法' })
+  try {
+    const url = await resolveMediaUrl(raw)
+    res.json({ url, playUrl: `/api/vod/hls?url=${encodeURIComponent(url)}` })
+  } catch (err) {
+    vodError(res, err, '解析播放地址失败')
+  }
+})
+
+// HLS 代理（m3u8 重写 + 片段透传，解决 Referer / 跨域）
+app.get('/api/vod/hls', assertProxyToken, handleHlsProxy)
+
+// ---- 影视聚合（数据源来自 awesome-zhuiju-free 的 TVBox 配置） ----
+
+function vodError(res, err, fallbackMessage = '影视源请求失败') {
+  const message = err?.message || fallbackMessage
+  res.status(502).json({ error: message })
+}
+
+// ---- 影视配置定时自动刷新 ----
+const VOD_REFRESH_HOURS = Math.max(Number(process.env.VOD_AUTO_REFRESH_HOURS ?? 6) || 0, 0)
+const vodRefreshState = {
+  intervalHours: VOD_REFRESH_HOURS,
+  lastAt: 0,
+  running: false,
+  error: ''
+}
+
+async function autoRefreshVod() {
+  if (vodRefreshState.running) return
+  vodRefreshState.running = true
+  try {
+    const sources = await refreshConfigs()
+    await checkSources(sources, { deadline: 12000, concurrency: 6 })
+    vodRefreshState.lastAt = Date.now()
+    vodRefreshState.error = ''
+    console.log(`[vod] 配置已自动刷新：${sources.length} 个源`)
+  } catch (err) {
+    vodRefreshState.lastAt = Date.now()
+    vodRefreshState.error = err?.message || '自动刷新失败'
+    console.error('[vod] 自动刷新失败:', vodRefreshState.error)
+  } finally {
+    vodRefreshState.running = false
+  }
+}
+
+if (VOD_REFRESH_HOURS > 0) {
+  // 启动后预热一次，之后按间隔刷新
+  setTimeout(() => void autoRefreshVod(), 20000)
+  setInterval(() => void autoRefreshVod(), VOD_REFRESH_HOURS * 3600 * 1000)
+}
+
+// 可用影视源列表（带健康状态 + 自动刷新元信息）
+app.get('/api/vod/sources', async (req, res) => {
+  try {
+    const refresh = req.query.refresh === '1'
+    const sources = await getSources({ refresh })
+    if (req.query.check === '1') {
+      const deadline = Math.min(Math.max(Number(req.query.deadline) || 8000, 1500), 20000)
+      await checkSources(sources, { deadline })
+    }
+    res.json({
+      sources: sourcesWithHealth(sources),
+      meta: {
+        autoRefreshHours: vodRefreshState.intervalHours,
+        lastRefreshAt: vodRefreshState.lastAt,
+        refreshing: vodRefreshState.running,
+        lastError: vodRefreshState.error
+      }
+    })
+  } catch (err) {
+    vodError(res, err, '加载影视源失败')
+  }
+})
+
+// ---- 影视配置管理（源分组） ----
+
+async function configsWithStatus() {
+  const configs = await listConfigs()
+  let sources = []
+  try {
+    sources = await getSources()
+  } catch {
+    sources = []
+  }
+  const counts = new Map()
+  for (const s of sources) {
+    if (!s.configId) continue
+    counts.set(s.configId, (counts.get(s.configId) || 0) + 1)
+  }
+  return configs.map((c) => ({
+    ...c,
+    ...getConfigStatus(c.id),
+    sourceCount: counts.get(c.id) || 0
+  }))
+}
+
+app.get('/api/vod/configs', async (_req, res) => {
+  try {
+    res.json({ configs: await configsWithStatus() })
+  } catch (err) {
+    vodError(res, err, '加载配置失败')
+  }
+})
+
+app.post('/api/vod/configs', async (req, res) => {
+  try {
+    const item = await addConfig({
+      name: req.body?.name,
+      url: req.body?.url,
+      group: req.body?.group
+    })
+    invalidateSources()
+    res.json({ ok: true, config: item })
+  } catch (err) {
+    res.status(400).json({ error: err.message || '新增配置失败' })
+  }
+})
+
+app.put('/api/vod/configs/:id', async (req, res) => {
+  try {
+    const item = await updateConfig(req.params.id, req.body || {})
+    invalidateSources({ configId: item.id })
+    res.json({ ok: true, config: item })
+  } catch (err) {
+    res.status(400).json({ error: err.message || '更新配置失败' })
+  }
+})
+
+app.delete('/api/vod/configs/:id', async (req, res) => {
+  try {
+    await removeConfig(req.params.id)
+    invalidateSources({ configId: req.params.id })
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ error: err.message || '删除配置失败' })
+  }
+})
+
+// 重新抓取配置（可指定单个 id）
+app.post('/api/vod/configs/refresh', async (req, res) => {
+  try {
+    const id = req.body?.id ? String(req.body.id) : null
+    await refreshConfigs(id)
+    res.json({ ok: true, configs: await configsWithStatus() })
+  } catch (err) {
+    vodError(res, err, '刷新配置失败')
+  }
+})
+
+// 多源同片自动选最快线路
+app.get('/api/vod/best', async (req, res) => {
+  const wd = String(req.query.wd || '').trim()
+  if (!wd) return res.status(400).json({ error: '缺少 wd 参数' })
+  const year = String(req.query.year || '').trim()
+  const limit = Math.min(Math.max(Number(req.query.limit) || 8, 1), 20)
+  try {
+    const data = await findBestLines({ wd, year, limit, probe: req.query.probe !== '0' })
+    res.json(data)
+  } catch (err) {
+    vodError(res, err, '选路失败')
+  }
+})
+
+// 分类列表
+app.get('/api/vod/categories', async (req, res) => {
+  const source = await resolveSource(String(req.query.site || ''))
+  if (!source) return res.status(404).json({ error: '影视源不存在' })
+  try {
+    const { classes } = await fetchCategories(source.api)
+    markHealth(source.id, true)
+    res.json({ site: source.id, classes })
+  } catch (err) {
+    markHealth(source.id, false, err.message)
+    vodError(res, err)
+  }
+})
+
+// 分类列表（分页）
+app.get('/api/vod/list', async (req, res) => {
+  const source = await resolveSource(String(req.query.site || ''))
+  if (!source) return res.status(404).json({ error: '影视源不存在' })
+  const page = Math.min(Math.max(Number(req.query.page) || 1, 1), 1000)
+  const typeId = String(req.query.type || '')
+  try {
+    const data = await fetchList(source.api, { typeId, page })
+    markHealth(source.id, true)
+    res.json({ site: source.id, siteName: source.name, ...data })
+  } catch (err) {
+    markHealth(source.id, false, err.message)
+    vodError(res, err)
+  }
+})
+
+// 详情（含线路与剧集播放地址）
+app.get('/api/vod/detail', async (req, res) => {
+  const source = await resolveSource(String(req.query.site || ''))
+  if (!source) return res.status(404).json({ error: '影视源不存在' })
+  const id = String(req.query.id || '')
+  if (!id) return res.status(400).json({ error: '缺少 id 参数' })
+  try {
+    const detail = await fetchDetail(source.api, id)
+    if (!detail) return res.status(404).json({ error: '未找到该影片' })
+    markHealth(source.id, true)
+    res.json({ site: source.id, siteName: source.name, detail })
+  } catch (err) {
+    markHealth(source.id, false, err.message)
+    vodError(res, err)
+  }
+})
+
+// 聚合搜索：并发查询多个源，按 名称+年份 去重
+app.get('/api/vod/search', async (req, res) => {
+  const wd = String(req.query.wd || '').trim()
+  if (!wd) return res.status(400).json({ error: '缺少搜索关键词' })
+  const limit = Math.min(Math.max(Number(req.query.limit) || 40, 1), 120)
+  try {
+    const all = await getSources()
+    const requested = String(req.query.sites || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    let targets = requested.length
+      ? all.filter((s) => requested.includes(s.id))
+      : sourcesWithHealth(all)
+          .filter((s) => s.status !== 'fail')
+          .slice(0, 14)
+    if (!targets.length) targets = all.slice(0, 8)
+
+    const settled = await Promise.allSettled(
+      targets.map(async (source) => {
+        const data = await fetchList(source.api, { wd, page: 1 })
+        markHealth(source.id, true)
+        return { source, list: data.list }
+      })
+    )
+
+    const seen = new Set()
+    const results = []
+    for (const item of settled) {
+      if (item.status !== 'fulfilled') continue
+      const { source, list } = item.value
+      for (const video of list) {
+        const key = `${video.name}|${video.year}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        results.push({
+          ...video,
+          site: source.id,
+          siteName: source.name
+        })
+        if (results.length >= limit) break
+      }
+      if (results.length >= limit) break
+    }
+    res.json({ wd, total: results.length, list: results })
+  } catch (err) {
+    vodError(res, err, '搜索失败')
+  }
 })
 
 // ---- 站内搜索 / 抓取任务（两阶段） ----

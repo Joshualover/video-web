@@ -1,0 +1,11 @@
+[
+  { "name": "老刘备", "url": "https://raw.liucn.cc/box/m.json", "group": "默认配置" },
+  { "name": "小马", "url": "https://szyyds.cn/tv/x.json", "group": "默认配置" },
+  { "name": "小盒子4K", "url": "http://xhztv.top/4k.json", "group": "默认配置" },
+  { "name": "小盒子多仓", "url": "http://xhztv.top/dc", "group": "默认配置" },
+  { "name": "拾光多仓", "url": "http://xmbjm.fh4u.org/dc.txt", "group": "默认配置" },
+  { "name": "挺好分享多仓", "url": "http://ztha.top/TVBox/GYCK.json", "group": "默认配置" },
+  { "name": "无名", "url": "https://6800.kstore.vip/fish.json", "group": "默认配置" },
+  { "name": "嗷呜", "url": "http://itv666.cc/aowu/config.webp", "group": "默认配置" },
+  { "name": "VOX", "url": "http://rihou.cc:88/demo.php", "group": "默认配置" }
+]

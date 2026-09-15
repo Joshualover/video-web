@@ -21,6 +21,20 @@
 - 实时进度（第 X/N 条）、去重报告、完成后一键加载列表
 - 站点壳域名失效时自动切换可用域名（无需手动配置）
 
+### 影视聚合（影视）
+基于 [awesome-zhuiju-free](https://github.com/laoma2053/awesome-zhuiju-free) 收录的 **TVBox / 影视仓配置地址**，解析出其中的「苹果 CMS」采集接口，聚合成一个可直接点播的影视站：
+- **数据源**：配置地址可在「源管理」页增删改、按配置**分组**、启停；自动解析配置里的 `type=1` CMS 接口（`type=3` 的 csp_ 蜘蛛源依赖 TVBox 内核，Web 端用不了，自动跳过）；内置 16 个兜底源
+- **源健康检测**：一键检测各源可用性，自动切到可用源，源缓存 6 小时
+- **配置定时自动刷新**：默认每 6 小时重新抓取配置并做健康检测（`VOD_AUTO_REFRESH_HOURS=0` 可关闭）
+- **分类浏览 + 分页**、**多源聚合搜索**（按 名称+年份 去重）、**详情 / 线路 / 剧集列表**
+- **收藏**独立页：支持**分组**（移动/解散/新建）与**排序**（最近收藏 / 名称 / 年份）
+- **播放历史**独立页：支持「**按片聚合** / 全部记录」两种视图，记录播放进度可续播
+- **多源同片自动选最快线路**：搜索同片 → 并发测速 → 按可用性与延迟排序；结果**本地缓存 6 小时**（重开秒出，可手动重新测速）；当前线路播放失败时自动切到最快可用线路
+- **播放地址解析**：部分源给的是「网页播放页」（如 `/share/xxx`、`/play/xxx`），服务端会解析出真实 m3u8
+- **HLS 代理**：m3u8 清单重写 + 分片透传，解决 Referer 校验与跨域（`/api/vod/hls`）
+
+> 影视数据来自第三方采集接口，本项目不存储、不转码、不传播任何内容；可用性取决于对应源站。仅供本地学习使用。
+
 ### 其他
 - 登录保护：默认账号 `admin` / 密码 `admin123`（设置页可修改、退出）
 - 白天/夜晚主题切换（顶部太阳/月亮按钮，跟随系统默认，记住选择）
@@ -116,6 +130,13 @@ Docker 方式：仓库含 `Dockerfile` / `docker-compose.yml`（构建阶段需�
 server/index.js        Express：静态托管 + 代理 + data 播放列表 + 搜片任务接口
 server/proxy-core.js   代理核心逻辑（Express 与 Vercel Serverless 共用）
 server/crawler.js      站内搜片爬虫（搜索/抓取/并入 m3u，壳域名自动切换）
+server/vod/sources.js            影视源管理（解析 TVBox 配置 + 健康检测 + 缓存）
+server/vod/config-store.js       配置地址持久化（data/vod-configs.json）
+server/vod/maccms.js             苹果 CMS 采集接口封装
+server/vod/hls.js                播放地址解析 + HLS 代理（清单重写/分片透传/测速）
+server/vod/best.js               多源同片选路（搜索 + 测速排序）
+server/vod/default-configs.json  默认配置地址
+server/vod/fallback-sources.json 内置兜底影视源
 data/                  m3u 播放列表目录（不入 git，需手动同步）
 api/                   Vercel Serverless（仅 /api/proxy、/api/health）
 vercel.json            Vercel 构建与路由配置
@@ -124,9 +145,14 @@ Dockerfile / docker-compose.yml    Docker 部署（可选）
 src/lib/m3u.js         m3u / m3u8 解析器（分组/属性/EXTGRP）
 src/lib/fetch.js       远程加载与代理降级
 src/lib/storage.js     localStorage 封装
-src/stores/            播放列表 / 播放器 / 收藏最近 / UI / 登录
-src/views/             首页 / 频道列表 / 播放 / 收藏 / 最近 / 搜片 / 设置 / 登录
+src/lib/vod.js         影视接口客户端
+src/stores/            播放列表 / 播放器 / 收藏最近 / UI / 登录 / 影视(源/收藏/历史/配置)
+src/components/VodNav.vue  影视子导航
+src/views/             首页 / 频道列表 / 播放 / 收藏 / 最近 / 搜片 / 设置 / 登录 / 影视(发现/详情/播放/收藏/历史/源管理)
 scripts/test-m3u.mjs   m3u 解析器单元测试
+scripts/e2e-vod.mjs            影视流程端到端测试（需本机 Edge/Chrome）
+scripts/e2e-vod-features.mjs   收藏/历史/源管理/选路 端到端测试
+scripts/e2e-vod-features2.mjs  收藏分组/历史聚合/选路缓存 端到端测试
 ```
 
 ## 免责声明

@@ -6,3 +6,4 @@ dist
 data/
 *.bak
 *.tmp.mjs
+e2e-*.png
