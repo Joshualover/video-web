@@ -48,7 +48,30 @@ let triedProxy = false
 let applyToken = 0
 let autoTried = false
 let lastProgressSave = 0
+let stallTimer = null
 const playCache = new Map()
+// 已尝试过的线路（组件级：切换线路时 Vue 复用组件实例，离开播放页即重置），避免自动切台来回打转
+const triedSources = new Set()
+
+// 源站清单能拉到、但分片被拒（502/403）时 VHS 会无限重试且不派发 error，这里起个兜底计时器
+const STALL_MS = 15000
+
+function clearStallWatch() {
+  if (stallTimer) {
+    clearTimeout(stallTimer)
+    stallTimer = null
+  }
+}
+
+function armStallWatch() {
+  clearStallWatch()
+  stallTimer = setTimeout(() => {
+    stallTimer = null
+    if (!player || player.isDisposed()) return
+    if (player.readyState() >= 2 || player.currentTime() > 0.5) return
+    handleError(true)
+  }, STALL_MS)
+}
 
 const favSite = () => String(route.params.site)
 const favId = () => String(route.params.id)
@@ -111,11 +134,13 @@ function initPlayer() {
   player.on('playing', () => {
     playing.value = true
     playError.value = ''
+    clearStallWatch()
   })
+  player.on('loadeddata', clearStallWatch)
   player.on('waiting', () => {
     playing.value = false
   })
-  player.on('error', handleError)
+  player.on('error', () => handleError())
   player.on('ended', () => {
     vodStore.updateProgress(favSite(), favId(), player.duration(), player.duration())
     playNext()
@@ -147,14 +172,14 @@ function initPlayer() {
 
 async function applySource() {
   const ep = currentEpisode.value
-  if (!player || !ep) return
+  if (!player || player.isDisposed() || !ep) return
   const token = ++applyToken
   playError.value = ''
   triedProxy = false
   playLoading.value = true
   try {
     const info = await getPlaySrc(ep)
-    if (token !== applyToken) return
+    if (token !== applyToken || !player || player.isDisposed()) return
     player.src({ src: info.src, type: info.type })
     const resumeAt = Number(route.query.t) || 0
     if (resumeAt > 10) {
@@ -167,24 +192,30 @@ async function applySource() {
       })
     }
     player.play().catch(() => {})
+    armStallWatch()
   } catch {
-    if (token !== applyToken) return
+    if (token !== applyToken || !player || player.isDisposed()) return
     // 解析/代理失败时退回直连
     player.src({ src: ep.url, type: mediaType(ep.url) })
     player.play().catch(() => {})
+    armStallWatch()
   } finally {
     if (token === applyToken) playLoading.value = false
   }
 }
 
-function handleError() {
+function handleError(fromStall = false) {
+  clearStallWatch()
+  if (!player || player.isDisposed()) return
   const ep = currentEpisode.value
   if (!ep) return
-  if (!triedProxy) {
+  // 真·error 事件时才退回直连（部分源允许跨域）；卡死说明地址已解析成功、是源站拒了分片，直连没意义，直接换源
+  if (!fromStall && !triedProxy) {
     triedProxy = true
     // 代理失败时退回直连（部分源本身允许跨域）
     player.src({ src: ep.url, type: mediaType(ep.url) })
     player.play().catch(() => {})
+    armStallWatch()
     return
   }
   playing.value = false
@@ -243,9 +274,14 @@ async function autoSwitchOnFail() {
       bestCacheAt.value = Date.now()
     }
     const cand = (data.list || []).find(
-      (x) => x.ok && !(x.site === favSite() && x.id === favId())
+      (x) =>
+        x.ok &&
+        !(x.site === favSite() && x.id === favId()) &&
+        !triedSources.has(`${x.site}|${x.id}`)
     )
     if (cand) {
+      triedSources.add(`${favSite()}|${favId()}`)
+      triedSources.add(`${cand.site}|${cand.id}`)
       uiStore.toast(`当前线路不可用，已自动切换到「${cand.siteName}」`, 'warning')
       switchToSource(cand)
     }
@@ -370,10 +406,15 @@ async function load() {
 watch(
   () => `${route.params.site}|${route.params.id}`,
   () => {
+    playCache.clear()
+    clearStallWatch()
+    applyToken += 1
+    // 参数变化时模板会重建 <video>，必须销毁旧实例；否则播放器仍绑在被移除的元素上，画布永远黑屏
     if (player) {
-      playCache.clear()
-      load()
+      player.dispose()
+      player = null
     }
+    load()
   }
 )
 
@@ -412,6 +453,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearStallWatch()
   if (player) {
     player.dispose()
     player = null

@@ -3054,6 +3054,7 @@ input::placeholder {
 
 .vod-video-wrap {
   position: relative;
+  aspect-ratio: 16 / 9;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: #000;
