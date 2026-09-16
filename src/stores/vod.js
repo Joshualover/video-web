@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
 import { loadJson, saveJson } from '../lib/storage'
-import { vodApi, titleKey } from '../lib/vod'
+import { vodApi, titleKey, normalizeTitle } from '../lib/vod'
 
 const SITE_KEY = 'vodActiveSite'
 const RECENTS_KEY = 'vodRecents'
 const FAVORITES_KEY = 'vodFavorites'
 const BEST_KEY = 'vodBestCache'
+const SKIP_KEY = 'vodSkipConfigs'
 
 const DEFAULT_GROUP = '默认分组'
 const BEST_TTL = 6 * 60 * 60 * 1000
@@ -23,7 +24,23 @@ export const useVodStore = defineStore('vod', {
     bestCache: loadJson(BEST_KEY, {}),
     configs: [],
     configsLoading: false,
-    configsError: ''
+    configsError: '',
+    // 豆瓣榜单（发现页）
+    doubanKinds: [],
+    douban: {
+      kind: 'movie',
+      category: '',
+      type: '',
+      page: 1,
+      pageCount: 1,
+      total: 0,
+      list: [],
+      loading: false,
+      error: '',
+      cached: false
+    },
+    // 跳过片头片尾：{ 'site|id': { enable, intro, outro } }
+    skipConfigs: loadJson(SKIP_KEY, {}) || {}
   }),
 
   getters: {
@@ -253,6 +270,80 @@ export const useVodStore = defineStore('vod', {
       } finally {
         this.configsLoading = false
       }
+    },
+
+    // ---- 豆瓣榜单 / 跳过片头片尾 ----
+    async fetchDoubanOptions() {
+      if (this.doubanKinds.length) return this.doubanKinds
+      const { kinds } = await vodApi.doubanOptions()
+      this.doubanKinds = Array.isArray(kinds) ? kinds : []
+      return this.doubanKinds
+    },
+
+    async fetchDouban({ kind, category, type, page } = {}) {
+      this.douban.loading = true
+      this.douban.error = ''
+      try {
+        const data = await vodApi.doubanHot({
+          kind: kind ?? this.douban.kind,
+          category: category ?? this.douban.category,
+          type: type ?? this.douban.type,
+          page: page ?? this.douban.page,
+          limit: 24
+        })
+        this.douban.kind = data.kind
+        this.douban.category = data.category
+        this.douban.type = data.type
+        this.douban.page = data.page
+        this.douban.pageCount = data.pageCount
+        this.douban.total = data.total
+        this.douban.list = data.list || []
+        this.douban.cached = Boolean(data.cached)
+        return this.douban
+      } catch (err) {
+        this.douban.error = err.message || '获取豆瓣榜单失败'
+        throw err
+      } finally {
+        this.douban.loading = false
+      }
+    },
+
+    // 用片名（+年份）跨源找一部可播放的片子，供豆瓣卡片一键起播
+    async findPlayable(title, year = '') {
+      const data = await vodApi.search(title, { limit: 60 })
+      const want = normalizeTitle(title)
+      if (!want) return null
+      let best = null
+      let bestScore = 0
+      for (const item of data.list || []) {
+        const got = normalizeTitle(item.name)
+        if (!got) continue
+        let score = 0
+        if (got === want) score += 3
+        else if (got.includes(want) || want.includes(got)) score += 1
+        else continue
+        if (year && item.year && String(item.year) === String(year)) score += 4
+        if (score > bestScore || (score === bestScore && (item.sources?.length || 0) > (best?.sources?.length || 0))) {
+          bestScore = score
+          best = item
+        }
+      }
+      return best
+    },
+
+    getSkipConfig(site, id) {
+      const item = this.skipConfigs[`${site}|${id}`]
+      return item && typeof item === 'object'
+        ? { enable: Boolean(item.enable), intro: Number(item.intro) || 0, outro: Number(item.outro) || 0 }
+        : { enable: false, intro: 0, outro: 0 }
+    },
+
+    saveSkipConfig(site, id, patch = {}) {
+      const key = `${site}|${id}`
+      const next = { ...this.getSkipConfig(site, id), ...patch }
+      this.skipConfigs = { ...this.skipConfigs, [key]: next }
+      saveJson(SKIP_KEY, this.skipConfigs)
+      return next
     },
 
     async addConfig(payload) {

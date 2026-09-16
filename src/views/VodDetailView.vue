@@ -14,7 +14,7 @@ import {
   User,
   Zap
 } from 'lucide-vue-next'
-import { vodApi } from '../lib/vod'
+import { vodApi, vodImage } from '../lib/vod'
 import { useVodStore } from '../stores/vod'
 
 const route = useRoute()
@@ -157,7 +157,7 @@ onMounted(load)
     <template v-else-if="detail">
       <section class="vod-detail">
         <div class="vod-detail-poster">
-          <img v-if="detail.pic" :src="detail.pic" alt="" referrerpolicy="no-referrer" />
+          <img v-if="detail.pic" :src="vodImage(detail.pic)" alt="" />
           <span v-else class="vod-poster-fallback">{{ detail.name.slice(0, 2) }}</span>
         </div>
         <div class="vod-detail-info">

@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  FastForward,
   Film,
   Heart,
   Loader2,
@@ -42,6 +43,9 @@ const bestLoading = ref(false)
 const bestList = ref([])
 const bestError = ref('')
 const bestCacheAt = ref(0)
+// 跳过片头片尾（按 源+片 记忆，存本地）
+const showSkip = ref(false)
+const skip = ref({ enable: false, intro: 0, outro: 0 })
 
 let player = null
 let triedProxy = false
@@ -49,6 +53,8 @@ let applyToken = 0
 let autoTried = false
 let lastProgressSave = 0
 let stallTimer = null
+let skipApplied = false
+let outroFired = false
 const playCache = new Map()
 // 已尝试过的线路（组件级：切换线路时 Vue 复用组件实例，离开播放页即重置），避免自动切台来回打转
 const triedSources = new Set()
@@ -152,6 +158,7 @@ function initPlayer() {
     const t = player.currentTime()
     if (t > 1) vodStore.updateProgress(favSite(), favId(), t, player.duration())
   })
+  player.on('timeupdate', applySkip)
   player.on('volumechange', () => {
     if (player.muted()) {
       if (!playerStore.muted) playerStore.setPrefs({ muted: true })
@@ -173,6 +180,8 @@ function initPlayer() {
 async function applySource() {
   const ep = currentEpisode.value
   if (!player || player.isDisposed() || !ep) return
+  skipApplied = false
+  outroFired = false
   const token = ++applyToken
   playError.value = ''
   triedProxy = false
@@ -339,6 +348,76 @@ function togglePlay() {
   else player.pause()
 }
 
+// ---- 跳过片头片尾 ----
+function formatClock(seconds) {
+  const total = Math.max(Math.round(Number(seconds) || 0), 0)
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return m ? `${m}:${String(s).padStart(2, '0')}` : `${s} 秒`
+}
+
+// 播放中自动跳过：片头直接 seek 过去，片尾提前跳下一集
+function applySkip() {
+  if (!player || player.isDisposed() || !skip.value.enable) return
+  const duration = player.duration()
+  const t = player.currentTime()
+  if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(t)) return
+  const intro = Number(skip.value.intro) || 0
+  const outro = Number(skip.value.outro) || 0
+  if (intro > 1 && t > 0.3 && t < intro && !skipApplied) {
+    skipApplied = true
+    try {
+      player.currentTime(intro)
+      uiStore.toast(`已跳过片头 ${formatClock(intro)}`, 'success')
+    } catch {
+      // 忽略 seek 失败
+    }
+    return
+  }
+  if (outro > 0 && !outroFired && duration - t <= outro && duration - t > 0.3) {
+    outroFired = true
+    playNext()
+  }
+}
+
+function toggleSkip() {
+  skip.value = vodStore.saveSkipConfig(favSite(), favId(), { enable: !skip.value.enable })
+  skipApplied = false
+  outroFired = false
+  uiStore.toast(skip.value.enable ? '已开启跳过片头片尾' : '已关闭跳过片头片尾', 'success')
+}
+
+function setSkipField(field, event) {
+  const value = Math.max(Math.floor(Number(event.target.value) || 0), 0)
+  skip.value = vodStore.saveSkipConfig(favSite(), favId(), { [field]: value })
+  if (field === 'intro') skipApplied = false
+  if (field === 'outro') outroFired = false
+}
+
+function markIntro() {
+  const t = Math.floor(player?.currentTime?.() || 0)
+  if (t < 1) {
+    uiStore.toast('先播放到片头结束的位置再点', 'warning')
+    return
+  }
+  skip.value = vodStore.saveSkipConfig(favSite(), favId(), { intro: t, enable: true })
+  skipApplied = false
+  uiStore.toast(`片头已记为 ${formatClock(t)}`, 'success')
+}
+
+function markOutro() {
+  const duration = player?.duration?.() || 0
+  const t = player?.currentTime?.() || 0
+  if (!duration || t < 1) {
+    uiStore.toast('先播放到片尾开始的位置再点', 'warning')
+    return
+  }
+  const outro = Math.max(Math.floor(duration - t), 1)
+  skip.value = vodStore.saveSkipConfig(favSite(), favId(), { outro, enable: true })
+  outroFired = false
+  uiStore.toast(`片尾已记为最后 ${formatClock(outro)}`, 'success')
+}
+
 function toggleFullscreen() {
   if (!player) return
   if (!player.isFullscreen()) player.requestFullscreen()
@@ -368,6 +447,7 @@ async function load() {
   bestError.value = ''
   bestCacheAt.value = 0
   autoTried = false
+  skip.value = vodStore.getSkipConfig(favSite(), favId())
   try {
     const data = await vodApi.detail(String(route.params.site), String(route.params.id))
     detail.value = data.detail
@@ -549,6 +629,15 @@ onBeforeUnmount(() => {
           </button>
           <button
             class="icon-btn"
+            :class="{ active: showSkip || skip.enable }"
+            type="button"
+            title="跳过片头片尾"
+            @click="showSkip = !showSkip"
+          >
+            <FastForward :size="17" />
+          </button>
+          <button
+            class="icon-btn"
             :class="{ active: showBest }"
             type="button"
             title="多源选路（换源）"
@@ -557,6 +646,45 @@ onBeforeUnmount(() => {
             <Zap :size="17" />
           </button>
           <span class="vod-stage-title">{{ currentEpisode?.name }}</span>
+        </div>
+        <div v-if="showSkip" class="vod-skip">
+          <button
+            class="vod-skip-switch"
+            :class="{ on: skip.enable }"
+            type="button"
+            @click="toggleSkip"
+          >
+            {{ skip.enable ? '自动跳过：开' : '自动跳过：关' }}
+          </button>
+          <label class="vod-skip-field">
+            <span>片头</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              :value="skip.intro"
+              aria-label="片头秒数"
+              @change="setSkipField('intro', $event)"
+            />
+            <span class="unit">秒</span>
+          </label>
+          <button class="btn btn-small btn-ghost" type="button" @click="markIntro">用当前时间</button>
+          <label class="vod-skip-field">
+            <span>片尾</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              :value="skip.outro"
+              aria-label="片尾秒数"
+              @change="setSkipField('outro', $event)"
+            />
+            <span class="unit">秒</span>
+          </label>
+          <button class="btn btn-small btn-ghost" type="button" @click="markOutro">用当前时间</button>
+          <span class="count-note">
+            片头从 {{ formatClock(skip.intro) }} 开始 · 片尾剩 {{ formatClock(skip.outro) }} 时跳下一集
+          </span>
         </div>
       </section>
 

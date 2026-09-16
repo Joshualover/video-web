@@ -6,13 +6,16 @@ import {
   ChevronLeft,
   ChevronRight,
   Film,
+  History,
   Loader2,
   RefreshCw,
   Search,
   Server,
+  Sparkles,
   X
 } from 'lucide-vue-next'
-import { vodApi, groupCategories } from '../lib/vod'
+import { loadJson, saveJson } from '../lib/storage'
+import { vodApi, groupCategories, vodImage } from '../lib/vod'
 import { useVodStore } from '../stores/vod'
 import { useUiStore } from '../stores/ui'
 import VodNav from '../components/VodNav.vue'
@@ -24,6 +27,13 @@ const uiStore = useUiStore()
 
 const keyword = ref('')
 const searchMode = ref(false)
+// 发现页两个标签：豆瓣榜单 / 按源浏览（记住上次选择）
+const tab = ref(loadJson('vodHomeTab', '') === 'browse' ? 'browse' : 'douban')
+
+function setTab(next) {
+  tab.value = next
+  saveJson('vodHomeTab', next)
+}
 const searching = ref(false)
 const searchResults = ref([])
 
@@ -38,6 +48,50 @@ const listLoading = ref(false)
 const listError = ref('')
 
 const failed = reactive(new Set())
+const openingTitle = ref('')
+
+const douban = computed(() => vodStore.douban)
+const doubanKindDef = computed(() =>
+  vodStore.doubanKinds.find((k) => k.kind === douban.value.kind)
+)
+
+async function selectDoubanKind(kindDef) {
+  const category = kindDef.categories[0]?.value || ''
+  const type = kindDef.types[0]?.value || ''
+  await vodStore.fetchDouban({ kind: kindDef.kind, category, type, page: 1 }).catch(() => {})
+}
+
+async function selectDoubanCategory(value) {
+  await vodStore.fetchDouban({ category: value, page: 1 }).catch(() => {})
+}
+
+async function selectDoubanType(value) {
+  await vodStore.fetchDouban({ type: value, page: 1 }).catch(() => {})
+}
+
+// 换一批：往后翻页，到底了回到第一页
+async function shuffleDouban() {
+  const next = douban.value.page >= douban.value.pageCount ? 1 : douban.value.page + 1
+  await vodStore.fetchDouban({ page: next }).catch(() => {})
+}
+
+// 豆瓣卡片 → 拿片名（+年份）跨源找一部，再进详情（详情页已有「多源选路」可换更快线路）
+async function openDouban(item) {
+  if (openingTitle.value) return
+  openingTitle.value = item.name
+  try {
+    const hit = await vodStore.findPlayable(item.name, item.year)
+    if (!hit) {
+      uiStore.toast(`没找到「${item.name}」的可用片源，换个源或稍后再试`, 'warning')
+      return
+    }
+    router.push(`/vod/detail/${hit.site}/${encodeURIComponent(hit.id)}`)
+  } catch (err) {
+    uiStore.toast(err.message || '查找片源失败', 'warning')
+  } finally {
+    openingTitle.value = ''
+  }
+}
 
 const sources = computed(() => vodStore.sources)
 const activeSite = computed(() => vodStore.activeSiteId)
@@ -64,6 +118,19 @@ function openRecent(r) {
     path: `/vod/play/${r.site}/${encodeURIComponent(r.id)}`,
     query: { line: r.line || 0, index: r.index || 0 }
   })
+}
+
+// 继续观看：带上已看进度
+function openContinue(r) {
+  router.push({
+    path: `/vod/play/${r.site}/${encodeURIComponent(r.id)}`,
+    query: { line: r.line || 0, index: r.index || 0, t: Math.floor(r.position || 0) }
+  })
+}
+
+function progressPercent(r) {
+  if (!r.duration) return 0
+  return Math.min(Math.max(Math.round(((r.position || 0) / r.duration) * 100), 2), 100)
 }
 
 async function loadCategories() {
@@ -167,6 +234,20 @@ watch(
 )
 
 onMounted(async () => {
+  // 豆瓣榜单与采集源无关，先拉（不阻塞源加载）
+  vodStore
+    .fetchDoubanOptions()
+    .then((kinds) => {
+      const first = kinds[0]
+      return vodStore.fetchDouban({
+        kind: first?.kind || 'movie',
+        category: first?.categories?.[0]?.value || '',
+        type: first?.types?.[0]?.value || '',
+        page: 1
+      })
+    })
+    .catch(() => {})
+
   try {
     await vodStore.fetchSources()
   } catch {
@@ -225,38 +306,124 @@ onMounted(async () => {
       </form>
     </section>
 
-    <section class="vod-toolbar">
-      <label class="vod-site">
-        <Server :size="15" />
-        <span>数据源</span>
-        <select :value="activeSite" :disabled="!sources.length" @change="changeSite">
-          <option v-if="!sources.length" value="">加载中...</option>
-          <optgroup v-for="g in vodStore.sourceGroups" :key="g.group" :label="g.group">
-            <option v-for="s in g.sources" :key="s.id" :value="s.id">
-              {{ s.name }}{{ s.status === 'ok' ? ' ✓' : s.status === 'fail' ? ' ✕' : '' }}
-            </option>
-          </optgroup>
-        </select>
-      </label>
-      <span class="vod-health">
-        <span v-if="vodStore.sourcesLoading">正在加载数据源…</span>
-        <span v-else-if="!vodStore.healthChecked">可用 {{ vodStore.healthySources.length }} / {{ sources.length }}（检测中）</span>
-        <span v-else>可用 {{ vodStore.healthySources.length }} / {{ sources.length }} 个源</span>
-      </span>
-      <button
-        class="btn btn-ghost btn-small"
-        type="button"
-        :disabled="vodStore.sourcesLoading"
-        @click="vodStore.fetchSources({ check: true })"
-      >
-        <RefreshCw :size="14" /> 检测源
-      </button>
-    </section>
-
     <p v-if="vodStore.sourcesError" class="load-error">{{ vodStore.sourcesError }}</p>
 
+    <!-- 两个视图切成标签：豆瓣榜单 / 按源浏览 -->
+    <div v-if="!searchMode" class="vod-tabs">
+      <button
+        class="vod-tab"
+        :class="{ active: tab === 'douban' }"
+        type="button"
+        @click="setTab('douban')"
+      >
+        <Sparkles :size="15" /> 豆瓣热门
+      </button>
+      <button
+        class="vod-tab"
+        :class="{ active: tab === 'browse' }"
+        type="button"
+        @click="setTab('browse')"
+      >
+        <Server :size="15" /> 按源浏览
+      </button>
+    </div>
+
+    <!-- 豆瓣热门：不依赖采集源，点卡片自动跨源找片 -->
+    <section v-if="!searchMode && tab === 'douban'" class="vod-douban">
+      <div class="section-head spaced">
+        <h2><Sparkles :size="17" /> 豆瓣热门</h2>
+        <div class="vod-head-actions">
+          <span v-if="douban.total" class="count-note">共 {{ douban.total }} 部 · 第 {{ douban.page }}/{{ douban.pageCount }} 页</span>
+          <span v-if="douban.cached" class="count-note">缓存</span>
+          <button
+            class="btn btn-ghost btn-small"
+            type="button"
+            :disabled="douban.loading"
+            @click="shuffleDouban"
+          >
+            <Loader2 v-if="douban.loading" class="spin" :size="13" />
+            <RefreshCw v-else :size="13" />
+            换一批
+          </button>
+        </div>
+      </div>
+
+      <div v-if="vodStore.doubanKinds.length" class="vod-cats">
+        <div class="vod-cat-row">
+          <button
+            v-for="k in vodStore.doubanKinds"
+            :key="k.kind"
+            class="vod-chip"
+            :class="{ active: douban.kind === k.kind }"
+            type="button"
+            @click="selectDoubanKind(k)"
+          >
+            {{ k.label }}
+          </button>
+        </div>
+        <div v-if="doubanKindDef" class="vod-cat-row sub">
+          <button
+            v-for="c in doubanKindDef.categories"
+            :key="c.value"
+            class="vod-chip sm"
+            :class="{ active: douban.category === c.value }"
+            type="button"
+            @click="selectDoubanCategory(c.value)"
+          >
+            {{ c.label }}
+          </button>
+          <span class="vod-chip-gap"></span>
+          <button
+            v-for="t in doubanKindDef.types"
+            :key="t.value"
+            class="vod-chip sm"
+            :class="{ active: douban.type === t.value }"
+            type="button"
+            @click="selectDoubanType(t.value)"
+          >
+            {{ t.label }}
+          </button>
+        </div>
+      </div>
+
+      <div v-if="douban.loading && !douban.list.length" class="vod-state">
+        <Loader2 class="spin" :size="22" /> 正在获取豆瓣榜单…
+      </div>
+      <p v-else-if="douban.error" class="load-error">{{ douban.error }}</p>
+      <div v-else class="vod-grid">
+        <article
+          v-for="d in douban.list"
+          :key="d.id"
+          class="vod-card"
+          :class="{ busy: openingTitle === d.name }"
+          @click="openDouban(d)"
+        >
+          <div class="vod-poster">
+            <img v-if="d.poster" :src="vodImage(d.poster)" alt="" loading="lazy" />
+            <span v-else class="vod-poster-fallback">{{ (d.name || '?').slice(0, 2) }}</span>
+            <span v-if="d.score" class="vod-remark">{{ d.score }} 分</span>
+            <span v-if="openingTitle === d.name" class="vod-card-busy">
+              <Loader2 class="spin" :size="18" />
+            </span>
+          </div>
+          <div class="vod-card-body">
+            <strong class="vod-card-name">{{ d.name }}</strong>
+            <span class="vod-card-meta">
+              <span>{{ d.year || '—' }}</span>
+              <span v-if="d.subtitle">· {{ d.subtitle.split('/')[0].trim() }}</span>
+            </span>
+          </div>
+        </article>
+      </div>
+      <p class="vod-panel-tip">
+        点封面会用片名＋年份在已启用的源里找片，找到后进详情页；没收录就提示换个源（可在「源管理」里多启用几个源）。
+      </p>
+    </section>
+
+    <!-- 继续观看 -->
     <!-- 搜索结果 -->
     <template v-if="searchMode">
+      <div class="vod-search-results">
       <div class="section-head">
         <h2>搜索结果「{{ keyword }}」</h2>
         <button class="text-link" type="button" @click="exitSearch">返回浏览 <X :size="14" /></button>
@@ -272,7 +439,7 @@ onMounted(async () => {
           <div class="vod-poster">
             <img
               v-if="v.pic && !failed.has(videoKey(v))"
-              :src="v.pic"
+              :src="vodImage(v.pic)"
               alt=""
               loading="lazy"
               referrerpolicy="no-referrer"
@@ -286,16 +453,51 @@ onMounted(async () => {
             <span class="vod-card-meta">
               <span>{{ v.year || '—' }}</span>
               <span v-if="v.type">· {{ v.type }}</span>
-              <span class="vod-site-badge">{{ v.siteName }}</span>
+              <span class="vod-site-badge">
+                {{ v.sources && v.sources.length > 1 ? v.sources.length + ' 个源' : v.siteName }}
+              </span>
             </span>
           </div>
         </article>
       </div>
       <div v-else-if="listError" class="vod-state error"><AlertTriangle :size="20" /> {{ listError }}</div>
+      </div>
     </template>
 
     <!-- 分类浏览 -->
-    <template v-else>
+    <template v-else-if="!searchMode && tab === 'browse'">
+      <div class="vod-browse">
+    <section class="vod-toolbar">
+      <label class="vod-site">
+        <Server :size="15" />
+        <span>数据源</span>
+        <select :value="activeSite" :disabled="!sources.length" @change="changeSite">
+          <option v-if="!sources.length" value="">加载中...</option>
+          <optgroup v-for="g in vodStore.sourceGroups" :key="g.group" :label="g.group">
+            <option v-for="s in g.sources.filter((x) => x.enabled !== false)" :key="s.id" :value="s.id">
+              {{ s.name }}{{ s.status === 'ok' ? ' ✓' : s.status === 'fail' ? ' ✕' : '' }}
+            </option>
+          </optgroup>
+        </select>
+      </label>
+      <span class="vod-health">
+        <span v-if="vodStore.sourcesLoading">正在加载数据源…</span>
+        <span v-else-if="!vodStore.healthChecked">可用 {{ vodStore.healthySources.length }} / {{ vodStore.sources.length }}（检测中）</span>
+        <span v-else>可用 {{ vodStore.healthySources.length }} / {{ vodStore.sources.length }} 个源</span>
+      </span>
+      <button
+        class="btn btn-ghost btn-small"
+        type="button"
+        :disabled="vodStore.sourcesLoading"
+        @click="vodStore.fetchSources({ check: true })"
+      >
+        <RefreshCw :size="14" /> 检测源
+      </button>
+    </section>
+
+      <div class="section-head spaced">
+        <h2><Server :size="16" /> 按源浏览（{{ vodStore.activeSource?.name || '未选择源' }}）</h2>
+      </div>
       <div v-if="roots.length" class="vod-cats">
         <div class="vod-cat-row">
           <button
@@ -397,11 +599,13 @@ onMounted(async () => {
           </button>
         </div>
       </template>
+      </div>
     </template>
 
+    <!-- 最近观看（带进度，点击续播） -->
     <section v-if="vodStore.recents.length" class="vod-recents">
       <div class="section-head spaced">
-        <h2>最近观看</h2>
+        <h2><History :size="16" /> 最近观看</h2>
         <button class="text-link" type="button" @click="vodStore.clearRecents()">清空</button>
       </div>
       <div class="vod-grid">
@@ -409,15 +613,21 @@ onMounted(async () => {
           v-for="r in vodStore.recents.slice(0, 12)"
           :key="`${r.site}|${r.id}`"
           class="vod-card"
-          @click="openRecent(r)"
+          @click="openContinue(r)"
         >
           <div class="vod-poster">
-            <img v-if="r.pic" :src="r.pic" alt="" loading="lazy" referrerpolicy="no-referrer" />
+            <img v-if="r.pic" :src="vodImage(r.pic)" alt="" loading="lazy" />
             <span v-else class="vod-poster-fallback">{{ (r.name || '?').slice(0, 2) }}</span>
             <span v-if="r.episodeName" class="vod-remark">{{ r.episodeName }}</span>
+            <span v-if="r.duration" class="vod-progress">
+              <i :style="{ width: progressPercent(r) + '%' }"></i>
+            </span>
           </div>
           <div class="vod-card-body">
             <strong class="vod-card-name">{{ r.name }}</strong>
+            <span v-if="r.duration" class="vod-card-meta">
+              <span>已看 {{ progressPercent(r) }}%</span>
+            </span>
           </div>
         </article>
       </div>

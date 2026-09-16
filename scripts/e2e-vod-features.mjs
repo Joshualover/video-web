@@ -7,6 +7,7 @@ const browser = await chromium.launch({ executablePath: EDGE, headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript(() => {
   localStorage.setItem('flow-player:auth-session', 'true')
+  localStorage.setItem('flow-player:vodHomeTab', '"browse"')
 })
 const page = await context.newPage()
 const errors = []
@@ -26,14 +27,14 @@ let detailUrl = ''
 
 await step('影视导航可见', async () => {
   await page.goto(BASE + '/vod', { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('.vod-card', { timeout: 30000 })
+  await page.waitForSelector('.vod-browse .vod-card', { timeout: 30000 })
   const links = await page.locator('.vod-nav-link').allTextContents()
   console.log('     导航: ' + links.map((t) => t.trim()).join(' | '))
 })
 
 await step('详情页收藏', async () => {
   // 影视源里总有条目没有可播剧集（B 站类/听书类源），所以挨个卡片试，直到找到有剧集的
-  const cards = page.locator('.vod-card')
+  const cards = page.locator('.vod-browse .vod-card')
   const total = Math.min(await cards.count(), 6)
   let opened = false
   for (let i = 0; i < total; i += 1) {
@@ -89,8 +90,28 @@ await step('源管理页', async () => {
 })
 
 await step('多源选路', async () => {
-  await page.goto(detailUrl, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('.vod-episode', { timeout: 30000 })
+  // 选路依赖「别的源也收录了同一部片」，所以拿搜索里被多源收录的片来测，
+  // 不用浏览列表第一条（那是一部随机新片，很可能只有一个源有，天然測不出候选）
+  await page.goto(BASE + '/vod', { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('.vod-browse .vod-card', { timeout: 30000 })
+  await page.locator('.vod-search input').fill('庆余年')
+  await page.click('.vod-search button[type=submit]')
+  await page.waitForSelector('.vod-search-results .vod-card', { timeout: 40000 })
+  await page.waitForTimeout(1200)
+  const cards = page.locator('.vod-search-results .vod-card')
+  const total = await cards.count()
+  let picked = -1
+  for (let i = 0; i < total; i += 1) {
+    const badge = (await cards.nth(i).locator('.vod-site-badge').textContent().catch(() => '')) || ''
+    if (/\d+\s*个源/.test(badge)) {
+      picked = i
+      break
+    }
+  }
+  if (picked < 0) throw new Error('没有多源收录的结果可用于选路测试')
+  console.log('     选路测试片: ' + (await cards.nth(picked).locator('.vod-card-name').textContent()).trim())
+  await cards.nth(picked).click()
+  await page.waitForSelector('.vod-episode', { timeout: 40000 })
   await page.locator('.vod-detail-info .btn', { hasText: '多源选路' }).click()
   await page.waitForSelector('.vod-best-row', { timeout: 90000 })
   const n = await page.locator('.vod-best-row').count()

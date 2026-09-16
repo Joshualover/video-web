@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { Clock, Layers, List, Play, Trash2, X } from 'lucide-vue-next'
 import VodNav from '../components/VodNav.vue'
 import { useVodStore } from '../stores/vod'
-import { formatDuration } from '../lib/vod'
+import { formatDuration, vodImage } from '../lib/vod'
 
 const router = useRouter()
 const vodStore = useVodStore()
@@ -88,7 +88,7 @@ function formatTime(timestamp) {
         @click="resume(item)"
       >
         <div class="vod-history-thumb">
-          <img v-if="item.pic" :src="item.pic" alt="" loading="lazy" referrerpolicy="no-referrer" />
+          <img v-if="item.pic" :src="vodImage(item.pic)" alt="" loading="lazy" />
           <span v-else>{{ (item.name || '?').slice(0, 2) }}</span>
         </div>
         <div class="vod-history-main">

@@ -44,7 +44,21 @@ export const vodApi = {
   refreshConfigs: (id) => apiSend('/api/vod/configs/refresh', id ? { id } : {}),
   // 源级启停 / 单源检测
   setSourceEnabled: (id, enabled) => apiSend(`/api/vod/sources/${id}`, { enabled }, 'PUT'),
-  checkSource: (id) => apiSend(`/api/vod/sources/${id}/check`, {})
+  checkSource: (id) => apiSend(`/api/vod/sources/${id}/check`, {}),
+  // 豆瓣榜单（发现页）
+  doubanOptions: () => apiGet('/api/vod/douban/options'),
+  doubanHot: (params) => apiGet('/api/vod/douban/hot', params)
+}
+
+// 海报统一走服务端图片代理：源站防盗链 / http 图片在 https 页面会被浏览器拦掉。
+// 部署时若设置了 PROXY_TOKEN，可通过构建变量 VITE_PROXY_TOKEN 带上令牌。
+export function vodImage(url) {
+  const raw = String(url || '').trim()
+  if (!raw) return ''
+  if (!/^https?:\/\//i.test(raw)) return raw
+  const token = import.meta.env?.VITE_PROXY_TOKEN
+  const query = `url=${encodeURIComponent(raw)}${token ? `&token=${encodeURIComponent(token)}` : ''}`
+  return `/api/vod/image?${query}`
 }
 
 // 把分类拆成「顶级 + 子级」两层，兼容扁平分类

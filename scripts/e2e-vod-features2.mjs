@@ -7,6 +7,7 @@ const browser = await chromium.launch({ executablePath: EDGE, headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript(() => {
   localStorage.setItem('flow-player:auth-session', 'true')
+  localStorage.setItem('flow-player:vodHomeTab', '"browse"')
   const now = Date.now()
   localStorage.setItem(
     'flow-player:vodRecents',
@@ -76,17 +77,18 @@ await step('历史按片聚合', async () => {
 let detailUrl = ''
 await step('选路并写入缓存', async () => {
   await page.goto(BASE + '/vod', { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('.vod-card', { timeout: 30000 })
+  await page.waitForSelector('.vod-browse .vod-card', { timeout: 30000 })
   await page.locator('.vod-search input').fill('庆余年')
   await page.click('.vod-search button[type=submit]')
-  await page.waitForSelector('.vod-card', { timeout: 30000 })
+  await page.waitForSelector('.vod-search-results .vod-card', { timeout: 40000 })
   await page.waitForTimeout(1500)
-  const cards = page.locator('.vod-card')
+  const cards = page.locator('.vod-search-results .vod-card')
   const total = await cards.count()
   let picked = 0
   for (let i = 0; i < total; i += 1) {
     const badge = (await cards.nth(i).locator('.vod-site-badge').textContent().catch(() => '')) || ''
-    if (/量子|光速|新浪|虎牙/.test(badge)) {
+    // 多源收录的卡片最稳（详情页能选路换源），其次是这几个老牌源
+    if (/量子|光速|新浪|虎牙/.test(badge) || /\d+\s*个源/.test(badge)) {
       picked = i
       break
     }

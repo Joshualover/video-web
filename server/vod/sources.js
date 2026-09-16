@@ -210,6 +210,18 @@ export function activeSources(sources) {
   return sources.filter((s) => s.enabled !== false)
 }
 
+// 源排序：可用优先 → 已知延迟小的优先 → 其余保持原顺序（保证顺序稳定）
+export function rankSources(sources) {
+  const weight = (s) => (s.status === 'ok' ? 0 : s.status === 'unknown' ? 1 : 2)
+  const latency = (s) => (Number(s.latency) > 0 ? Number(s.latency) : 99999)
+  return [...sources].sort((a, b) => {
+    const wa = weight(a)
+    const wb = weight(b)
+    if (wa !== wb) return wa - wb
+    return latency(a) - latency(b)
+  })
+}
+
 export async function getSources({ refresh = false, configId = null } = {}) {
   if (!refresh && !configId && sourcesCache && Date.now() - sourcesCache.at < SOURCES_TTL) {
     return withPrefs(sourcesCache.sources)

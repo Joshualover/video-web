@@ -8,6 +8,7 @@ const browser = await chromium.launch({ executablePath: EDGE, headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript(() => {
   localStorage.setItem('flow-player:auth-session', 'true')
+  localStorage.setItem('flow-player:vodHomeTab', '"browse"')
 })
 const page = await context.newPage()
 const errors = []
@@ -35,8 +36,8 @@ async function step(name, fn) {
 
 await step('打开影视首页', async () => {
   await page.goto(BASE + '/vod', { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('.vod-card', { timeout: 30000 })
-  const count = await page.locator('.vod-card').count()
+  await page.waitForSelector('.vod-browse .vod-card', { timeout: 30000 })
+  const count = await page.locator('.vod-browse .vod-card').count()
   console.log('     卡片数: ' + count)
   await page.screenshot({ path: 'e2e-vod-home.png', fullPage: false })
 })
@@ -48,26 +49,27 @@ await step('切换分类', async () => {
   if (n > 2) {
     await chips.nth(2).click()
     await page.waitForTimeout(2500)
-    console.log('     切换后卡片数: ' + (await page.locator('.vod-card').count()))
+    console.log('     切换后卡片数: ' + (await page.locator('.vod-browse .vod-card').count()))
   }
 })
 
 await step('聚合搜索', async () => {
   await page.fill('.vod-search input', WD)
   await page.click('.vod-search button[type=submit]')
-  await page.waitForSelector('.vod-card', { timeout: 30000 })
+  await page.waitForSelector('.vod-search-results .vod-card', { timeout: 40000 })
   await page.waitForTimeout(1500)
-  console.log('     搜索结果: ' + (await page.locator('.vod-card').count()))
+  console.log('     搜索结果: ' + (await page.locator('.vod-search-results .vod-card').count()))
   await page.screenshot({ path: 'e2e-vod-search.png' })
 })
 
 await step('进入详情', async () => {
-  const cards = page.locator('.vod-card')
+  const cards = page.locator('.vod-search-results .vod-card')
   const n = await cards.count()
   let picked = 0
   for (let i = 0; i < n; i += 1) {
     const badge = (await cards.nth(i).locator('.vod-site-badge').textContent().catch(() => '')) || ''
-    if (/量子|光速|新浪|虎牙/.test(badge)) {
+    // 多源收录的卡片最稳（详情页能选路换源），其次是这几个老牌源
+    if (/量子|光速|新浪|虎牙/.test(badge) || /\d+\s*个源/.test(badge)) {
       picked = i
       break
     }
@@ -86,7 +88,12 @@ await step('进入播放页并播放', async () => {
   })
   await page.locator('.vod-episode').first().click()
   await page.waitForSelector('video', { state: 'attached', timeout: 30000 })
-  await page.waitForTimeout(10000)
+  // 源站/CDN 时好时坏：给自动换源留时间（15s 卡死看门狗），最多等 30s
+  for (let i = 0; i < 10; i += 1) {
+    await page.waitForTimeout(3000)
+    const t = await page.evaluate(() => document.querySelector('video')?.currentTime || 0)
+    if (t > 1) break
+  }
   const info = await page.evaluate(() => {
     const v = document.querySelector('video')
     return {

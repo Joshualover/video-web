@@ -19,6 +19,7 @@ import {
   sourcesWithHealth,
   spreadByGroup,
   activeSources,
+  rankSources,
   getConfigStatus,
   refreshConfigs,
   invalidateSources
@@ -26,6 +27,8 @@ import {
 import { setSourceEnabled } from './vod/source-prefs.js'
 import { proxyStatus } from './net.js'
 import { resolveMediaUrl, handleHlsProxy, isHttpUrl } from './vod/hls.js'
+import { handleImageProxy } from './vod/image.js'
+import { doubanOptions, fetchDoubanHot } from './vod/douban.js'
 import { listConfigs, addConfig, updateConfig, removeConfig } from './vod/config-store.js'
 import { findBestLines } from './vod/best.js'
 
@@ -168,6 +171,29 @@ app.get('/api/vod/play', async (req, res) => {
 
 // HLS 代理（m3u8 重写 + 片段透传，解决 Referer / 跨域）
 app.get('/api/vod/hls', assertProxyToken, handleHlsProxy)
+
+// 图片代理（海报防盗链 / http 图片在 https 页面被浏览器拦截）
+app.get('/api/vod/image', assertProxyToken, handleImageProxy)
+
+// 豆瓣热门榜单（发现页用，不依赖任何采集源）
+app.get('/api/vod/douban/options', (_req, res) => {
+  res.json({ kinds: doubanOptions() })
+})
+
+app.get('/api/vod/douban/hot', async (req, res) => {
+  try {
+    const data = await fetchDoubanHot({
+      kind: String(req.query.kind || 'movie'),
+      category: String(req.query.category || ''),
+      type: String(req.query.type || ''),
+      page: Number(req.query.page) || 1,
+      limit: Number(req.query.limit) || 24
+    })
+    res.json(data)
+  } catch (err) {
+    vodError(res, err, '获取豆瓣榜单失败')
+  }
+})
 
 // ---- 影视聚合（数据源来自 awesome-zhuiju-free 的 TVBox 配置） ----
 
@@ -398,20 +424,23 @@ app.get('/api/vod/detail', async (req, res) => {
 app.get('/api/vod/search', async (req, res) => {
   const wd = String(req.query.wd || '').trim()
   if (!wd) return res.status(400).json({ error: '缺少搜索关键词' })
-  const limit = Math.min(Math.max(Number(req.query.limit) || 40, 1), 120)
+  const limit = Math.min(Math.max(Number(req.query.limit) || 120, 1), 200)
   try {
     const all = await getSources()
     const requested = String(req.query.sites || '')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean)
+    // 参考 LunaTV：默认同时搜所有可用源（不再是固定的前十几个，否则好源会被挤掉），
+    // 按「可用+延迟」排序 + 分组轮流取，可用 VOD_SEARCH_SOURCES 调小/调大
+    const budget = Math.min(Math.max(Number(process.env.VOD_SEARCH_SOURCES) || 30, 1), 60)
     let targets = requested.length
       ? activeSources(all).filter((s) => requested.includes(s.id))
       : spreadByGroup(
-          activeSources(sourcesWithHealth(all)).filter((s) => s.status !== 'fail'),
-          14
+          rankSources(activeSources(sourcesWithHealth(all)).filter((s) => s.status !== 'fail')),
+          budget
         )
-    if (!targets.length) targets = spreadByGroup(activeSources(all), 8)
+    if (!targets.length) targets = spreadByGroup(rankSources(activeSources(all)), Math.min(budget, 8))
 
     const settled = await Promise.allSettled(
       targets.map(async (source) => {
@@ -421,21 +450,43 @@ app.get('/api/vod/search', async (req, res) => {
       })
     )
 
-    const seen = new Set()
+    const seen = new Map()
     const results = []
+    // 每个源最多取几条：否则一个「什么都搜得到」的源（B站/聚合类）会把总名额吃光，
+    // 后面那些正好收录了该片的源反而进不了结果页
+    const perSource = Math.min(Math.max(Number(req.query.perSource) || 8, 1), 30)
     for (const item of settled) {
       if (item.status !== 'fulfilled') continue
       const { source, list } = item.value
+      let taken = 0
       for (const video of list) {
         const key = `${video.name}|${video.year}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        results.push({
+        const same = seen.get(key)
+        // 同名同年的片合并成一条，记录它出现在哪些源（详情/播放页可一键换源）
+        if (same) {
+          if (!same.sources.some((s) => s.site === source.id)) {
+            same.sources.push({
+              site: source.id,
+              siteName: source.name,
+              id: video.id,
+              remarks: video.remarks || ''
+            })
+          }
+          continue
+        }
+        if (results.length >= limit) break
+        const entry = {
           ...video,
           site: source.id,
-          siteName: source.name
-        })
-        if (results.length >= limit) break
+          siteName: source.name,
+          sources: [
+            { site: source.id, siteName: source.name, id: video.id, remarks: video.remarks || '' }
+          ]
+        }
+        seen.set(key, entry)
+        results.push(entry)
+        taken += 1
+        if (taken >= perSource) break
       }
       if (results.length >= limit) break
     }

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Film, FolderPlus, Heart, Trash2, X } from 'lucide-vue-next'
 import VodNav from '../components/VodNav.vue'
+import { vodImage } from '../lib/vod'
 import { useVodStore } from '../stores/vod'
 import { useUiStore } from '../stores/ui'
 
@@ -134,7 +135,7 @@ function clearCurrent() {
         @click="open(item)"
       >
         <div class="vod-poster">
-          <img v-if="item.pic" :src="item.pic" alt="" loading="lazy" referrerpolicy="no-referrer" />
+          <img v-if="item.pic" :src="vodImage(item.pic)" alt="" loading="lazy" />
           <span v-else class="vod-poster-fallback">{{ (item.name || '?').slice(0, 2) }}</span>
           <span v-if="item.remarks" class="vod-remark">{{ item.remarks }}</span>
           <button

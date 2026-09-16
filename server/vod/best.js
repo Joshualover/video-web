@@ -1,6 +1,6 @@
 // 多源同片「自动选最快线路」：
 //  搜索所有可用源 → 找到同名影片 → 取首个剧集地址 → 实测延迟 → 按「可用优先、延迟升序」排序
-import { getSources, sourcesWithHealth, spreadByGroup, activeSources, mapLimit } from './sources.js'
+import { getSources, sourcesWithHealth, spreadByGroup, activeSources, rankSources, mapLimit } from './sources.js'
 import { fetchList, fetchDetail } from './maccms.js'
 import { probeMediaUrl } from './hls.js'
 
@@ -20,28 +20,47 @@ function titleMatch(a, b) {
   return na.includes(nb) || nb.includes(na)
 }
 
-export async function findBestLines({ wd, year = '', limit = 8, probe = true, maxSources = 12 }) {
+// 采集源对「带季数/括号后缀的长标题」支持很差（如「庆余年 第一季」可能什么都搜不到），
+// 所以额外用一个去掉季数的短标题再搜一遍，结果再统一做片名匹配。
+export function titleVariants(title) {
+  const raw = String(title || '').trim()
+  const out = []
+  if (raw) out.push(raw)
+  const short = raw
+    .replace(/[（(【[].*?[）)】\]]/g, ' ')
+    .replace(/(第[一二三四五六七八九十百千\d]+[季部集]|season\s*\d+|s\d{1,2})\s*$/i, '')
+    .replace(/[\s·:：\-–—]+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (short && short !== raw) out.push(short)
+  return out
+}
+
+export async function findBestLines({ wd, year = '', limit = 8, probe = true, maxSources = 16 }) {
   const key = `${wd}|${year}|${limit}|${probe}|${maxSources}`
   const cached = cache.get(key)
   if (cached && Date.now() - cached.at < CACHE_TTL) return cached.data
 
   const all = await getSources()
-  const ranked = activeSources(sourcesWithHealth(all)).filter((s) => s.status !== 'fail')
+  const ranked = rankSources(activeSources(sourcesWithHealth(all)).filter((s) => s.status !== 'fail'))
   // 按分组轮流取源，避免一个多仓订阅把选路名额占满
   const targets = spreadByGroup(ranked.length ? ranked : activeSources(all), maxSources)
 
-  // 1) 并发搜索，收集同名结果
+  // 1) 并发搜索，收集同名结果（长标题搜不到时用短标题兜底）
+  const queries = titleVariants(wd)
   const found = []
   await mapLimit(targets, 6, async (source) => {
-    try {
-      const data = await fetchList(source.api, { wd, page: 1 })
-      for (const video of data.list) {
-        if (!titleMatch(video.name, wd)) continue
-        if (year && video.year && String(video.year) !== String(year)) continue
-        found.push({ source, video })
+    for (const query of queries) {
+      try {
+        const data = await fetchList(source.api, { wd: query, page: 1 })
+        for (const video of data.list) {
+          if (!titleMatch(video.name, wd)) continue
+          if (year && video.year && String(video.year) !== String(year)) continue
+          found.push({ source, video })
+        }
+      } catch {
+        // 忽略单个源/单个关键词失败
       }
-    } catch {
-      // 忽略单个源失败
     }
   })
 
