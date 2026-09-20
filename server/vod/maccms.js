@@ -10,7 +10,7 @@ const UA =
 
 const MAX_BODY = 12 * 1024 * 1024
 
-export function httpGetText(rawUrl, { timeout = 12000, maxRedirects = 4, headers = {} } = {}) {
+export function httpGetText(rawUrl, { timeout = 12000, maxRedirects = 4, headers = {}, proxy } = {}) {
   return new Promise((resolve, reject) => {
     let url
     try {
@@ -24,11 +24,12 @@ export function httpGetText(rawUrl, { timeout = 12000, maxRedirects = 4, headers
       return
     }
     const lib = url.protocol === 'https:' ? https : http
+    const force = proxy === true ? 'proxy' : proxy === false ? 'direct' : undefined
     const req = lib.get(
       url,
       {
         rejectUnauthorized: false,
-        agent: agentFor(url),
+        agent: agentFor(url, { force }),
         headers: {
           'User-Agent': UA,
           Accept: '*/*',
@@ -46,7 +47,8 @@ export function httpGetText(rawUrl, { timeout = 12000, maxRedirects = 4, headers
             httpGetText(new URL(resHeaders.location, url).toString(), {
               timeout,
               maxRedirects: maxRedirects - 1,
-              headers
+              headers,
+              proxy
             })
           )
           return

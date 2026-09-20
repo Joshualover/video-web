@@ -8,12 +8,37 @@ import crypto from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { httpGetText, parseJsonLoose, fetchCategories } from './maccms.js'
+import { httpGetText, parseJsonLoose } from './maccms.js'
 import { listConfigs } from './config-store.js'
 import { disabledSourceIds } from './source-prefs.js'
+import { HGD_SITE, HGD_CATEGORIES } from './hgdju.js'
+import { VIDHUB_SITE } from './vidhub.js'
+import { loadCategories } from './query.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const FALLBACK_FILE = path.join(__dirname, 'fallback-sources.json')
+
+// 内置短剧源（黄瓜短剧，走专用适配器；不是苹果 CMS 接口）
+export const HGD_SOURCE = {
+  id: 'hgdju',
+  name: '黄瓜短剧',
+  api: HGD_SITE,
+  from: '内置',
+  group: '短剧',
+  kind: 'hgdju',
+  configId: ''
+}
+
+// 内置影视站（vidhub.tv，苹果 CMS 模板站但采集接口关闭，走页面适配器）
+export const VIDHUB_SOURCE = {
+  id: 'vidhub',
+  name: 'Vidhub 影视',
+  api: VIDHUB_SITE,
+  from: '内置',
+  group: '影视站',
+  kind: 'vidhub',
+  configId: ''
+}
 
 const SOURCES_TTL = 6 * 60 * 60 * 1000
 const HEALTH_TTL = 10 * 60 * 1000
@@ -181,17 +206,20 @@ async function buildSources({ force = false, onlyConfigId = null } = {}) {
     const api = normalizeApi(item.api)
     if (api) collected.push({ name: cleanName(item.name, api), api, from: '内置', group: '内置', configId: '' })
   }
+  // 内置适配器源固定挂在内置兜底源后面
+  collected.push({ ...HGD_SOURCE }, { ...VIDHUB_SOURCE })
 
   const seen = new Map()
   for (const item of collected) {
     const key = dedupeKey(item.api)
     if (seen.has(key)) continue
     seen.set(key, {
-      id: siteId(item.api),
+      id: item.id || siteId(item.api),
       name: item.name,
       api: item.api,
       from: item.from,
       group: item.group || '默认配置',
+      kind: item.kind || 'maccms',
       configId: item.configId || ''
     })
   }
@@ -286,7 +314,7 @@ export function getHealth(id) {
 export async function checkSource(source, timeout = 6500) {
   const started = Date.now()
   try {
-    const { classes } = await fetchCategories(source.api, { timeout })
+    const { classes } = await loadCategories(source, { timeout })
     const latency = Date.now() - started
     if (!classes.length) throw new Error('接口无分类数据')
     health.set(source.id, { ok: true, at: Date.now(), latency, classes: classes.length })
@@ -296,6 +324,10 @@ export async function checkSource(source, timeout = 6500) {
     health.set(source.id, { ok: false, at: Date.now(), error: message })
     return { id: source.id, status: 'fail', error: message }
   }
+}
+
+export function hgdCategories() {
+  return HGD_CATEGORIES.map((c) => ({ id: c.id, pid: '0', name: c.name }))
 }
 
 export function markHealth(id, ok, error = '') {

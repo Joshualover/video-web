@@ -1,7 +1,7 @@
 // 多源同片「自动选最快线路」：
 //  搜索所有可用源 → 找到同名影片 → 取首个剧集地址 → 实测延迟 → 按「可用优先、延迟升序」排序
 import { getSources, sourcesWithHealth, spreadByGroup, activeSources, rankSources, mapLimit } from './sources.js'
-import { fetchList, fetchDetail } from './maccms.js'
+import { loadList, loadDetail } from './query.js'
 import { probeMediaUrl } from './hls.js'
 
 const CACHE_TTL = 10 * 60 * 1000
@@ -52,7 +52,7 @@ export async function findBestLines({ wd, year = '', limit = 8, probe = true, ma
   await mapLimit(targets, 6, async (source) => {
     for (const query of queries) {
       try {
-        const data = await fetchList(source.api, { wd: query, page: 1 })
+        const data = await loadList(source, { wd: query, page: 1 })
         for (const video of data.list) {
           if (!titleMatch(video.name, wd)) continue
           if (year && video.year && String(video.year) !== String(year)) continue
@@ -77,7 +77,7 @@ export async function findBestLines({ wd, year = '', limit = 8, probe = true, ma
   // 2) 并发取详情 + 探测首集延迟
   const probed = await mapLimit(unique.slice(0, limit * 4), 5, async (item) => {
     try {
-      const detail = await fetchDetail(item.source.api, item.video.id)
+      const detail = await loadDetail(item.source, item.video.id)
       const episode = (detail?.playUrl || [])[0]?.[0]
       if (!episode) return null
       const result = probe ? await probeMediaUrl(episode.url, { timeout: 6000 }) : { ok: true, latency: 0 }

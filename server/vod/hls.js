@@ -4,7 +4,9 @@
 import http from 'node:http'
 import https from 'node:https'
 import { httpGetText } from './maccms.js'
-import { agentFor } from '../net.js'
+import { agentFor, setRouteHint } from '../net.js'
+import { isHgdPlayUrl, resolvePlay as resolveHgdPlay } from './hgdju.js'
+import { isVidhubPlayUrl, resolvePlay as resolveVidhubPlay } from './vidhub.js'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
@@ -35,6 +37,11 @@ export async function resolveMediaUrl(rawUrl) {
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('播放地址非法')
   if (MEDIA_EXT_RE.test(url.pathname)) return url.toString()
+
+  // 短剧源（黄瓜短剧）：播放页里的 m3u8 是 JSON 转义的（&），通用正则抠不出来，走专用解析
+  if (isHgdPlayUrl(url.toString())) return resolveHgdPlay(url.toString())
+  // 影视站（vidhub）：播放页里是播放器 iframe，m3u8 藏在 /player/ 页的 var config = {} 里
+  if (isVidhubPlayUrl(url.toString())) return resolveVidhubPlay(url.toString())
 
   const cached = resolveCache.get(url.toString())
   if (cached && Date.now() - cached.at < RESOLVE_TTL) return cached.url
@@ -153,7 +160,12 @@ export function handleHlsProxy(req, res) {
   } catch {
     return res.status(400).json({ error: 'url 参数非法' })
   }
+  fetchUpstream(req, res, url, { retried: false })
+}
 
+// 取上游：默认走代理（如果配了），失败（网络错误 / 4xx / 5xx）就换另一条路由重试一次。
+// 有的 CDN 必须直连（代理 IP 会被拒），有的偏偏只能走代理，所以成功的那条路会被记住。
+function fetchUpstream(req, res, url, state) {
   const lib = url.protocol === 'https:' ? https : http
   const headers = {
     'User-Agent': UA,
@@ -164,10 +176,40 @@ export function handleHlsProxy(req, res) {
   }
   if (req.headers.range) headers.Range = req.headers.range
 
+  const agent = agentFor(url, { force: state.force })
+  const route = agent ? 'proxy' : 'direct'
+  let settled = false
+
+  const retryOtherRoute = (reason) => {
+    if (settled || res.headersSent) return
+    settled = true
+    const other = route === 'proxy' ? 'direct' : 'proxy'
+    // other=direct 总是可试；other=proxy 得先确实配了代理
+    const otherViable = other === 'direct' ? true : Boolean(agentFor(url, { force: 'proxy' }))
+    if (!state.retried && otherViable) {
+      console.warn(
+        `[vod] ${url.hostname} ${route === 'proxy' ? '代理' : '直连'}失败（${reason}），改用${other === 'proxy' ? '代理' : '直连'}重试`
+      )
+      fetchUpstream(req, res, url, { ...state, retried: true, force: other })
+      return
+    }
+    res.status(502).json({ error: reason || '上游请求失败' })
+  }
+
   const upstream = lib.get(
     url,
-    { rejectUnauthorized: false, agent: agentFor(url), headers, timeout: 20000 },
+    { rejectUnauthorized: false, agent, headers, timeout: 20000 },
     (remote) => {
+      const code = remote.statusCode || 0
+      if (code >= 400 || code < 200) {
+        remote.resume()
+        retryOtherRoute(`上游返回 ${code}`)
+        return
+      }
+      settled = true
+      // 只有成功才记住这条路
+      setRouteHint(url.hostname, route)
+
       const contentType = remote.headers['content-type'] || ''
       const isPlaylist =
         /mpegurl|vnd\.apple/i.test(contentType) ||
@@ -198,11 +240,7 @@ export function handleHlsProxy(req, res) {
         return
       }
 
-      if (remote.statusCode && remote.statusCode >= 400) {
-        remote.resume()
-        return res.status(502).json({ error: `上游返回 ${remote.statusCode}` })
-      }
-      res.status(remote.statusCode || 200)
+      res.status(code || 200)
       if (contentType) res.set('Content-Type', contentType)
       const len = remote.headers['content-length']
       if (len) res.set('Content-Length', len)
@@ -216,12 +254,8 @@ export function handleHlsProxy(req, res) {
 
   upstream.on('timeout', () => upstream.destroy(new Error('请求超时')))
   upstream.on('error', (err) => {
-    if (!res.headersSent) {
-      const message = err?.code === 'ECONNRESET' ? '源站拒绝了连接（可能需要特定 Referer）' : err.message
-      res.status(502).json({ error: message || '上游请求失败' })
-    } else {
-      res.end()
-    }
+    const message = err?.code === 'ECONNRESET' ? '源站拒绝了连接（可能需要特定 Referer）' : err.message
+    retryOtherRoute(message || '上游请求失败')
   })
   req.on('close', () => upstream.destroy())
 }

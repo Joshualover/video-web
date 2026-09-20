@@ -9,7 +9,6 @@ import {
   tokenAllowed
 } from './proxy-core.js'
 import { collectOnly, crawlAndSave, isAllowedBase, getCrawlBases } from './crawler.js'
-import { fetchCategories, fetchList, fetchDetail } from './vod/maccms.js'
 import {
   getSources,
   resolveSource,
@@ -27,6 +26,7 @@ import {
 import { setSourceEnabled } from './vod/source-prefs.js'
 import { proxyStatus } from './net.js'
 import { resolveMediaUrl, handleHlsProxy, isHttpUrl } from './vod/hls.js'
+import { loadCategories, loadList, loadDetail } from './vod/query.js'
 import { handleImageProxy } from './vod/image.js'
 import { doubanOptions, fetchDoubanHot } from './vod/douban.js'
 import { listConfigs, addConfig, updateConfig, removeConfig } from './vod/config-store.js'
@@ -378,7 +378,7 @@ app.get('/api/vod/categories', async (req, res) => {
   const source = await resolveSource(String(req.query.site || ''))
   if (!source) return res.status(404).json({ error: '影视源不存在' })
   try {
-    const { classes } = await fetchCategories(source.api)
+    const { classes } = await loadCategories(source)
     markHealth(source.id, true)
     res.json({ site: source.id, classes })
   } catch (err) {
@@ -394,7 +394,7 @@ app.get('/api/vod/list', async (req, res) => {
   const page = Math.min(Math.max(Number(req.query.page) || 1, 1), 1000)
   const typeId = String(req.query.type || '')
   try {
-    const data = await fetchList(source.api, { typeId, page })
+    const data = await loadList(source, { typeId, page })
     markHealth(source.id, true)
     res.json({ site: source.id, siteName: source.name, ...data })
   } catch (err) {
@@ -410,7 +410,7 @@ app.get('/api/vod/detail', async (req, res) => {
   const id = String(req.query.id || '')
   if (!id) return res.status(400).json({ error: '缺少 id 参数' })
   try {
-    const detail = await fetchDetail(source.api, id)
+    const detail = await loadDetail(source, id)
     if (!detail) return res.status(404).json({ error: '未找到该影片' })
     markHealth(source.id, true)
     res.json({ site: source.id, siteName: source.name, detail })
@@ -444,7 +444,7 @@ app.get('/api/vod/search', async (req, res) => {
 
     const settled = await Promise.allSettled(
       targets.map(async (source) => {
-        const data = await fetchList(source.api, { wd, page: 1 })
+        const data = await loadList(source, { wd, page: 1 })
         markHealth(source.id, true)
         return { source, list: data.list }
       })

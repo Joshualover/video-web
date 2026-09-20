@@ -178,8 +178,59 @@ class TunnelHttpsAgent extends https.Agent {
 
 const agents = { http: null, https: null }
 
+// 部分站点（或其 CDN）反而不能走代理（代理 IP 会被 Cloudflare challenge / 取不到资源），
+// 由适配器在运行期登记这些域名，命中后强制直连；也可用 VOD_DIRECT_HOSTS 手动补充。
+const directHosts = new Set(
+  firstEnv(['VOD_DIRECT_HOSTS'])
+    .split(',')
+    .map((item) => item.trim().toLowerCase().replace(/^\./, ''))
+    .filter(Boolean)
+)
+
+// 运行期学到的「域名 → 该走直连还是代理」：同一个域名不要每次都试错
+const routeHints = new Map()
+
+function normalizeHost(hostname) {
+  // 去掉端口（agentFor 一律用 hostname 查，避免 g.x.com:9999 这种对不上）
+  return String(hostname || '').trim().toLowerCase().replace(/:[0-9]+$/, '')
+}
+
+export function setRouteHint(hostname, route) {
+  const host = normalizeHost(hostname)
+  if (!host || (route !== 'direct' && route !== 'proxy')) return
+  if (routeHints.get(host) === route) return
+  routeHints.set(host, route)
+  console.log(`[net] ${host} 以后走${route === 'direct' ? '直连' : '代理'}`)
+}
+
+export function getRouteHint(hostname) {
+  return routeHints.get(normalizeHost(hostname)) || null
+}
+
+export function addDirectHosts(hosts = []) {
+  let added = false
+  for (const host of hosts) {
+    const value = String(host || '').trim().toLowerCase().replace(/^\./, '')
+    if (value && !directHosts.has(value)) {
+      directHosts.add(value)
+      added = true
+    }
+  }
+  if (added) console.log(`[net] 直连域名（不走代理）：${[...directHosts].join(', ')}`)
+  return [...directHosts]
+}
+
+function isDirectHost(hostname) {
+  for (const suffix of directHosts) {
+    if (hostname === suffix || hostname.endsWith(`.${suffix}`)) return true
+  }
+  return false
+}
+
 // 给某个目标 URL 挑一个 agent；无需代理时返回 undefined
-export function agentFor(rawUrl) {
+//   force: 'direct' 强制直连 | 'proxy' 强制走代理（失败重试 / 路由学习时用）
+export function agentFor(rawUrl, { force } = {}) {
+  if (force === 'direct') return undefined
   const configured = parseConfig()
   if (!configured) return undefined
   let url
@@ -189,7 +240,11 @@ export function agentFor(rawUrl) {
     return undefined
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined
-  if (isBypassed(url.hostname)) return undefined
+  if (force !== 'proxy') {
+    if (isBypassed(url.hostname) || isDirectHost(url.hostname)) return undefined
+    // 之前学过这个域名该直连
+    if (getRouteHint(url.hostname) === 'direct') return undefined
+  }
   const key = url.protocol === 'https:' ? 'https' : 'http'
   if (!agents[key]) {
     agents[key] = key === 'https' ? new TunnelHttpsAgent() : new TunnelHttpAgent()
@@ -200,10 +255,14 @@ export function agentFor(rawUrl) {
 // 供接口/界面展示当前代理状态
 export function proxyStatus() {
   const configured = parseConfig()
-  if (!configured) return { enabled: false, url: '', noProxy: bypass }
+  const direct = [...directHosts]
+  const hints = [...routeHints.entries()].map(([host, route]) => `${host}:${route}`)
+  if (!configured) return { enabled: false, url: '', noProxy: bypass, directHosts: direct, routeHints: hints }
   return {
     enabled: true,
     url: `${configured.protocol}//${configured.host}`,
-    noProxy: bypass
+    noProxy: bypass,
+    directHosts: direct,
+    routeHints: hints
   }
 }

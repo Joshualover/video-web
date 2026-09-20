@@ -107,6 +107,14 @@ function mediaType(url) {
   return 'application/x-mpegURL'
 }
 
+// 只有「看着就是媒体文件」的地址才让浏览器直连兜底。
+// 短剧源（黄瓜短剧）与影视站源（Vidhub）给的是站点播放页（/play/...、/vodplay/...html），
+// 浏览器直连既播不了，源站被墙时还会挂到超时，把整个播放卡死（局域网设备上尤其明显）。
+function canPlayDirectly(url) {
+  const path = String(url || '').split('?')[0].toLowerCase()
+  return /\.(m3u8|mp4|webm|flv|mkv|ts)$/.test(path)
+}
+
 // 解析真实地址 + 走服务端 HLS 代理（解决 Referer / 跨域 / 网页播放页）
 async function getPlaySrc(ep) {
   if (playCache.has(ep.url)) return playCache.get(ep.url)
@@ -204,10 +212,16 @@ async function applySource() {
     armStallWatch()
   } catch {
     if (token !== applyToken || !player || player.isDisposed()) return
-    // 解析/代理失败时退回直连
-    player.src({ src: ep.url, type: mediaType(ep.url) })
-    player.play().catch(() => {})
-    armStallWatch()
+    // 解析/代理失败时退回直连（只对真正的媒体地址做）
+    if (canPlayDirectly(ep.url)) {
+      player.src({ src: ep.url, type: mediaType(ep.url) })
+      player.play().catch(() => {})
+      armStallWatch()
+      return
+    }
+    playing.value = false
+    playError.value = '播放失败：源站不可用、已下架或存在跨域限制'
+    void autoSwitchOnFail()
   } finally {
     if (token === applyToken) playLoading.value = false
   }
@@ -219,7 +233,7 @@ function handleError(fromStall = false) {
   const ep = currentEpisode.value
   if (!ep) return
   // 真·error 事件时才退回直连（部分源允许跨域）；卡死说明地址已解析成功、是源站拒了分片，直连没意义，直接换源
-  if (!fromStall && !triedProxy) {
+  if (!fromStall && !triedProxy && canPlayDirectly(ep.url)) {
     triedProxy = true
     // 代理失败时退回直连（部分源本身允许跨域）
     player.src({ src: ep.url, type: mediaType(ep.url) })
