@@ -20,7 +20,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DOMAIN_FILE = path.resolve(__dirname, '../data/crawl-domains.json')
 
 // 内置壳域名（站点会轮换域名；发现新域名后自动加入并持久化到 data/crawl-domains.json）
-const BUILTIN_DOMAINS = ['678074.xyz', '678069.xyz', '678060.xyz', '678063.xyz', '678064.xyz']
+const BUILTIN_DOMAINS = ['444.aakck.cc', '678074.xyz', '678069.xyz', '678060.xyz', '678063.xyz', '678064.xyz']
 
 function isValidDomain(host) {
   return (
@@ -158,25 +158,62 @@ function sanitizeName(name) {
     .slice(0, 40) || 'unnamed'
 }
 
-// 收集搜索结果（支持翻页；搜索页被重定向时自动发现新域名并重试一次）
-async function collectVodLinks(page, base, keyword, limit, retried = false) {
+// 在候选域名间打开搜索页：
+// - 域名失效/超时/被拦截（goto 报错或页面停在 about:blank）→ 自动切换下一个候选域名
+// - 搜索页被重定向（跳到首页/换域名丢失 wd）→ 记录发现的新域名并重试一次
+// 全部候选失败才抛错；成功则返回可用的搜索页 URL
+async function openSearchPage(page, keyword, base, retried = false) {
+  const tried = new Set()
+  let lastError = null
+  for (const candidate of expandBases(base)) {
+    if (tried.has(candidate)) continue
+    tried.add(candidate)
+    const searchUrl = `${candidate}/vodsearch/-------------.html?wd=${encodeURIComponent(keyword)}&submit=`
+    let navError = null
+    await page
+      .goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 })
+      .catch((e) => {
+        navError = e
+      })
+    const curUrl = page.url()
+    // 页面根本没打开（域名失效 / DNS / 超时 / 被拦截）→ 换下一个候选域名
+    if (navError || !/^https?:\/\//.test(curUrl)) {
+      const reason = navError ? String(navError.message || navError).split('\n')[0] : '页面未加载'
+      console.log(`[crawler] ${candidate} 打开失败: ${reason}`)
+      lastError = new Error(`站点 ${candidate.replace(/^https?:\/\//, '')} 无法访问（${reason}）`)
+      continue
+    }
+    // 搜索页被重定向：跳回首页 / 换域名丢失 wd → 记录新域名并重试一次
+    if (!curUrl.includes('/vodsearch/')) {
+      const newHost = addDiscoveredDomain(curUrl)
+      if (newHost) {
+        const newBase = `https://${newHost}`
+        if (newBase !== candidate && !retried) {
+          console.log(`[crawler] 搜索被重定向，自动切换到新域名 ${newHost}`)
+          return openSearchPage(page, keyword, newBase, true)
+        }
+      }
+      lastError = new Error(
+        `搜索页被重定向（${curUrl.slice(0, 60)}），站点可能更换了域名，已自动记录可稍后重试`
+      )
+      continue
+    }
+    return searchUrl
+  }
+  const hint = '；若为连接重置/域名被墙，可给服务端设置 VOD_HTTP_PROXY 代理后重启重试'
+  throw new Error(`${lastError?.message || '所有站点域名均无法访问，请稍后重试'}${hint}`)
+}
+
+// 收集搜索结果（支持翻页；域名失效或搜索页被重定向时自动切换域名重试）
+async function collectVodLinks(page, base, keyword, limit) {
+  const searchUrl = await openSearchPage(page, keyword, base)
   const links = []
   const seen = new Set()
-  const searchUrl = `${base}/vodsearch/-------------.html?wd=${encodeURIComponent(keyword)}&submit=`
   for (let p = 1; p <= 8 && links.length < limit; p += 1) {
     const url = p === 1 ? searchUrl : `${searchUrl}&page=${p}`
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {})
-    // 壳域名失效保护：若搜索页被重定向（跳到首页/换域名丢失 wd）
-    const curUrl = page.url()
-    if (p === 1 && !curUrl.includes('/vodsearch/')) {
-      const newHost = addDiscoveredDomain(curUrl)
-      const newBase = newHost ? `https://${newHost}` : null
-      if (newBase && newBase !== base && !retried) {
-        console.log(`[crawler] 搜索被重定向，自动切换到新域名 ${newHost}`)
-        return collectVodLinks(page, newBase, keyword, limit, true)
-      }
-      throw new Error(`搜索页被重定向（${curUrl.slice(0, 60)}），站点可能更换了域名，已自动记录可稍后重试`)
-    }
+    // 翻页时若页面被重定向/失效则停止继续翻页
+    if (!page.url().includes('/vodsearch/')) break
     await page.waitForTimeout(700)
     for (let i = 0; i < 5; i += 1) {
       await page.mouse.wheel(0, 1800)
@@ -268,16 +305,46 @@ function buildM3u(keyword, items) {
   return lines.join('\n') + '\n'
 }
 
+// 浏览器出网代理：站点域名被墙/被重置（ERR_CONNECTION_RESET）时，让浏览器走代理。
+// 与 net.js 保持一致，优先读 VOD_HTTP_PROXY，其次标准 *_PROXY 环境变量。
+function browserProxy() {
+  const keys = [
+    'VOD_HTTP_PROXY',
+    'HTTPS_PROXY',
+    'https_proxy',
+    'HTTP_PROXY',
+    'http_proxy',
+    'ALL_PROXY',
+    'all_proxy'
+  ]
+  const raw = keys.map((k) => process.env[k]).find((v) => v && v.trim())
+  if (!raw) return undefined
+  try {
+    const value = raw.trim()
+    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `http://${value}`)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined
+    const cfg = { server: `${u.protocol}//${u.host}` }
+    if (u.username) cfg.username = decodeURIComponent(u.username)
+    if (u.password) cfg.password = decodeURIComponent(u.password)
+    console.log(`[crawler] 浏览器走代理：${cfg.server}`)
+    return cfg
+  } catch {
+    return undefined
+  }
+}
+
 // 仅搜索：返回候选列表（不抓 m3u8），快速
 async function openBrowser() {
   const browserPath = findBrowser()
   if (!browserPath) {
     throw new Error('未找到可用浏览器内核（Edge/Chrome/Chromium），请安装并设置 BROWSER_PATH')
   }
+  const proxy = browserProxy()
   return chromium.launch({
     executablePath: browserPath,
     headless: true,
-    args: ['--no-sandbox']
+    args: ['--no-sandbox'],
+    proxy
   })
 }
 
