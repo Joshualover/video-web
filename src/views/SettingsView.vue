@@ -9,6 +9,7 @@ import {
   KeyRound,
   LayoutGrid,
   LayoutList,
+  ListVideo,
   LogOut,
   Play,
   Plus,
@@ -30,6 +31,17 @@ const libraryStore = useLibraryStore()
 const playerStore = usePlayerStore()
 const uiStore = useUiStore()
 const authStore = useAuthStore()
+
+const sections = [
+  { id: 'playlist', label: '播放列表管理', icon: ListVideo },
+  { id: 'player', label: '播放默认值', icon: Play },
+  { id: 'display', label: '显示设置', icon: LayoutGrid },
+  { id: 'cache', label: '本地缓存', icon: Database },
+  { id: 'account', label: '账号与安全', icon: KeyRound },
+  { id: 'backup', label: '数据备份与迁移', icon: Download },
+  { id: 'about', label: '关于', icon: Info }
+]
+const activeSection = ref('playlist')
 
 const newPlaylist = reactive({ name: '', url: '' })
 const saving = ref(false)
@@ -187,7 +199,7 @@ async function handleServerUpload(event) {
 <template>
   <div class="settings-page">
     <header class="page-head">
-      <button class="icon-btn" type="button" title="返回首页" @click="router.push('/')">
+      <button class="icon-btn" type="button" title="返回 m3u 列表" @click="router.push('/m3u')">
         <ArrowLeft :size="18" />
       </button>
       <div>
@@ -196,8 +208,24 @@ async function handleServerUpload(event) {
       </div>
     </header>
 
-    <div class="settings-grid">
-      <section class="settings-section">
+    <div class="settings-layout">
+      <aside class="settings-sidebar">
+        <nav class="settings-nav" aria-label="设置导航">
+          <button
+            v-for="s in sections"
+            :key="s.id"
+            class="settings-nav-item"
+            :class="{ active: activeSection === s.id }"
+            type="button"
+            @click="activeSection = s.id"
+          >
+            <component :is="s.icon" :size="16" />
+            <span>{{ s.label }}</span>
+          </button>
+        </nav>
+      </aside>
+      <div class="settings-content">
+      <section v-show="activeSection === 'playlist'" class="settings-section">
         <div class="section-head">
           <h2>播放列表管理</h2>
           <span class="count-note">{{ libraryStore.savedCount }} / 10</span>
@@ -270,7 +298,7 @@ async function handleServerUpload(event) {
         </div>
       </section>
 
-      <section class="settings-section">
+      <section v-show="activeSection === 'player'" class="settings-section">
         <div class="section-head">
           <h2>播放默认值</h2>
         </div>
@@ -325,7 +353,7 @@ async function handleServerUpload(event) {
         </label>
       </section>
 
-      <section class="settings-section">
+      <section v-show="activeSection === 'display'" class="settings-section">
         <div class="section-head">
           <h2>显示设置</h2>
         </div>
@@ -381,7 +409,7 @@ async function handleServerUpload(event) {
         </div>
       </section>
 
-      <section class="settings-section">
+      <section v-show="activeSection === 'cache'" class="settings-section">
         <div class="section-head">
           <h2>本地缓存</h2>
           <span class="count-note">占用 {{ usageText }}</span>
@@ -402,7 +430,7 @@ async function handleServerUpload(event) {
         </div>
       </section>
 
-      <section class="settings-section">
+      <section v-show="activeSection === 'account'" class="settings-section">
         <div class="section-head">
           <h2>账号与安全</h2>
           <span class="count-note">当前账号：{{ authStore.username }}</span>
@@ -442,7 +470,7 @@ async function handleServerUpload(event) {
         </div>
       </section>
 
-      <section class="settings-section">
+      <section v-show="activeSection === 'backup'" class="settings-section">
         <div class="section-head">
           <h2>数据备份与迁移</h2>
           <span class="count-note">跨设备同步</span>
@@ -471,7 +499,7 @@ async function handleServerUpload(event) {
         </div>
       </section>
 
-      <section class="settings-section">
+      <section v-show="activeSection === 'about'" class="settings-section">
         <div class="section-head">
           <h2>关于</h2>
         </div>
@@ -489,6 +517,7 @@ async function handleServerUpload(event) {
           </div>
         </div>
       </section>
+      </div>
     </div>
   </div>
 </template>
