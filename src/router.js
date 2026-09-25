@@ -18,7 +18,8 @@ import VodSourcesView from './views/VodSourcesView.vue'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'home', component: HomeView },
+    { path: '/', name: 'home', component: VodHomeView },
+    { path: '/m3u', name: 'm3u', component: HomeView },
     { path: '/channels', name: 'channels', component: ChannelListView },
     { path: '/player', name: 'player', component: PlayerView },
     { path: '/favorites', name: 'favorites', component: FavoritesView },
@@ -26,7 +27,7 @@ const router = createRouter({
     { path: '/search', name: 'search', component: SearchView },
     { path: '/settings', name: 'settings', component: SettingsView },
     { path: '/login', name: 'login', component: LoginView },
-    { path: '/vod', name: 'vod', component: VodHomeView },
+    { path: '/vod', redirect: '/' },
     { path: '/vod/favorites', name: 'vod-favorites', component: VodFavoritesView },
     { path: '/vod/history', name: 'vod-history', component: VodHistoryView },
     { path: '/vod/sources', name: 'vod-sources', component: VodSourcesView },

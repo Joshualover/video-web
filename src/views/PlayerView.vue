@@ -58,7 +58,7 @@ function backToList() {
 }
 
 function goHome() {
-  router.push('/')
+  router.push('/m3u')
 }
 
 function isEditableTarget(target) {
@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
         <button class="icon-btn" type="button" title="返回频道列表" @click="backToList">
           <ArrowLeft :size="18" />
         </button>
-        <button class="icon-btn" type="button" title="返回首页" @click="goHome">
+        <button class="icon-btn" type="button" title="返回 m3u 列表" @click="goHome">
           <Home :size="16" />
         </button>
         <div class="watch-info">

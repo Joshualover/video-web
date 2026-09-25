@@ -51,7 +51,7 @@ function removeFavorite(item) {
 <template>
   <div class="favorites-page">
     <header class="page-head">
-      <button class="icon-btn" type="button" title="返回首页" @click="router.push('/')">
+      <button class="icon-btn" type="button" title="返回 m3u 列表" @click="router.push('/m3u')">
         <ArrowLeft :size="18" />
       </button>
       <div>
@@ -94,8 +94,8 @@ function removeFavorite(item) {
       <Heart :size="36" />
       <h1>暂无收藏</h1>
       <p>在播放页点击频道行或播放器上的心形按钮，即可收藏频道。</p>
-      <button class="btn btn-primary" type="button" @click="router.push('/')">
-        <Star :size="16" /> 去首页
+      <button class="btn btn-primary" type="button" @click="router.push('/m3u')">
+        <Star :size="16" /> 去 m3u 列表
       </button>
     </div>
   </div>

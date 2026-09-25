@@ -51,7 +51,7 @@ const episodes = computed(() => lines.value[activeLine.value]?.episodes || [])
 
 function back() {
   if (window.history.length > 1) router.back()
-  else router.push('/vod')
+  else router.push('/')
 }
 
 function play(lineIndex, epIndex) {

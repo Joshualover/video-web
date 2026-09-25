@@ -5,13 +5,13 @@ import {
   Clapperboard,
   Film,
   History,
-  Home,
   ListVideo,
   Moon,
   Search,
   Settings,
   Star,
   Sun,
+  Tv,
   Zap
 } from 'lucide-vue-next'
 import { usePlaylistStore } from '../stores/playlist'
@@ -22,9 +22,9 @@ const playlistStore = usePlaylistStore()
 const uiStore = useUiStore()
 
 const navItems = [
-  { to: '/', label: '首页', icon: Home },
-  { to: '/vod', label: '影视', icon: Film },
-  { to: '/channels', label: '频道', icon: ListVideo, disabled: computed(() => !playlistStore.playlist) },
+  { to: '/', label: '首页', icon: Film },
+  { to: '/m3u', label: 'm3u', icon: ListVideo },
+  { to: '/channels', label: '频道', icon: Tv, disabled: computed(() => !playlistStore.playlist) },
   { to: '/favorites', label: '收藏', icon: Star },
   { to: '/recents', label: '最近', icon: History },
   { to: '/search', label: '搜片', icon: Search },
@@ -32,7 +32,7 @@ const navItems = [
 ]
 
 const activeName = computed(() => {
-  if (route.path.startsWith('/vod')) return '影视'
+  if (route.path === '/m3u') return 'm3u'
   if (route.path === '/channels' || route.path === '/player') return '频道'
   if (route.path === '/favorites') return '收藏'
   if (route.path === '/recents') return '最近'

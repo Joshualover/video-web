@@ -49,7 +49,7 @@ function formatTime(timestamp) {
 <template>
   <div class="recents-page">
     <header class="page-head">
-      <button class="icon-btn" type="button" title="返回首页" @click="router.push('/')">
+      <button class="icon-btn" type="button" title="返回 m3u 列表" @click="router.push('/m3u')">
         <ArrowLeft :size="18" />
       </button>
       <div>
@@ -92,8 +92,8 @@ function formatTime(timestamp) {
       <History :size="36" />
       <h1>暂无播放记录</h1>
       <p>播放过的频道会出现在这里。</p>
-      <button class="btn btn-primary" type="button" @click="router.push('/')">
-        <Clock :size="16" /> 去首页
+      <button class="btn btn-primary" type="button" @click="router.push('/m3u')">
+        <Clock :size="16" /> 去 m3u 列表
       </button>
     </div>
   </div>

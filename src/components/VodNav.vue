@@ -8,14 +8,14 @@ const route = useRoute()
 const vodStore = useVodStore()
 
 const items = computed(() => [
-  { to: '/vod', label: '发现', icon: Compass, count: 0 },
+  { to: '/', label: '发现', icon: Compass, count: 0 },
   { to: '/vod/favorites', label: '收藏', icon: Heart, count: vodStore.favorites.length },
   { to: '/vod/history', label: '历史', icon: Clock, count: vodStore.recents.length },
   { to: '/vod/sources', label: '源管理', icon: Server, count: vodStore.sources.length }
 ])
 
 function isActive(to) {
-  if (to === '/vod') return ['vod', 'vod-detail', 'vod-play'].includes(route.name)
+  if (to === '/') return ['home', 'vod', 'vod-detail', 'vod-play'].includes(route.name)
   return route.path === to
 }
 </script>

@@ -50,7 +50,7 @@ function toggleSidebar() {
 }
 
 function goHome() {
-  router.push('/')
+  router.push('/m3u')
 }
 
 // 点击频道：跳转到独立播放页
@@ -85,7 +85,7 @@ onBeforeUnmount(() => {
 
     <div v-else class="browse-wrap">
       <header class="player-header">
-        <button class="icon-btn" type="button" title="返回首页" @click="goHome">
+        <button class="icon-btn" type="button" title="返回 m3u 列表" @click="goHome">
           <ArrowLeft :size="18" />
         </button>
         <div class="header-info">
