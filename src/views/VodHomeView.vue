@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   AlertTriangle,
@@ -223,6 +223,7 @@ async function changeSite(event) {
 }
 
 const bootstrapping = ref(true)
+let healthCheckTimer = null
 
 watch(
   () => vodStore.activeSiteId,
@@ -256,25 +257,31 @@ onMounted(async () => {
   await loadCategories()
   bootstrapping.value = false
 
-  // 后台健康检查：若当前源不可用，自动切到可用源
-  vodStore
-    .fetchSources({ check: true })
-    .then(() => {
-      const current = vodStore.sources.find((s) => s.id === vodStore.activeSiteId)
-      if (current && current.status === 'fail') {
-        const healthy = vodStore.sources.find((s) => s.status === 'ok')
-        if (healthy && healthy.id !== current.id) {
-          uiStore.toast(`当前源不可用，已切换到「${healthy.name}」`, 'warning')
-          vodStore.setActiveSite(healthy.id)
+  // 后台健康检查：延迟执行，先让首屏（豆瓣榜单 + 分类）加载完成，避免阻塞
+  healthCheckTimer = setTimeout(() => {
+    vodStore
+      .fetchSources({ check: true })
+      .then(() => {
+        const current = vodStore.sources.find((s) => s.id === vodStore.activeSiteId)
+        if (current && current.status === 'fail') {
+          const healthy = vodStore.sources.find((s) => s.status === 'ok')
+          if (healthy && healthy.id !== current.id) {
+            uiStore.toast(`当前源不可用，已切换到「${healthy.name}」`, 'warning')
+            vodStore.setActiveSite(healthy.id)
+          }
         }
-      }
-    })
-    .catch(() => {})
+      })
+      .catch(() => {})
+  }, 3000)
 
   if (route.query.wd) {
     keyword.value = String(route.query.wd)
     doSearch()
   }
+})
+
+onBeforeUnmount(() => {
+  if (healthCheckTimer) clearTimeout(healthCheckTimer)
 })
 </script>
 

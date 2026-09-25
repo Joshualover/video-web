@@ -42,7 +42,8 @@ export const VIDHUB_SOURCE = {
 
 const SOURCES_TTL = 6 * 60 * 60 * 1000
 const HEALTH_TTL = 10 * 60 * 1000
-const CONFIG_TIMEOUT = 9000
+const HEALTH_TTL_FAIL = 30 * 60 * 1000 // 失败源退避：避免频繁重试已失效的源
+const CONFIG_TIMEOUT = 6000
 const MAX_SUB_CONFIGS = 12
 
 let sourcesCache = null // { at, sources }
@@ -305,13 +306,14 @@ export async function resolveSource(id) {
 export function getHealth(id) {
   const h = health.get(id)
   if (!h) return { status: 'unknown' }
-  if (Date.now() - h.at > HEALTH_TTL) return { status: 'unknown', stale: true }
+  const ttl = h.ok ? HEALTH_TTL : HEALTH_TTL_FAIL
+  if (Date.now() - h.at > ttl) return { status: 'unknown', stale: true }
   return h.ok
     ? { status: 'ok', latency: h.latency, classes: h.classes, checkedAt: h.at }
     : { status: 'fail', error: h.error, checkedAt: h.at }
 }
 
-export async function checkSource(source, timeout = 6500) {
+export async function checkSource(source, timeout = 4500) {
   const started = Date.now()
   try {
     const { classes } = await loadCategories(source, { timeout })
@@ -350,14 +352,14 @@ function mapLimit(items, limit, worker) {
 
 export { mapLimit }
 
-export async function checkSources(sources, { deadline = 8000, concurrency = 6 } = {}) {
+export async function checkSources(sources, { deadline = 8000, concurrency = 8 } = {}) {
   const started = Date.now()
   return mapLimit(sources, concurrency, async (source) => {
     const remain = deadline - (Date.now() - started)
     if (remain <= 500) return { id: source.id, status: 'unknown' }
     const cached = getHealth(source.id)
     if (cached.status !== 'unknown') return { id: source.id, ...cached }
-    return checkSource(source, Math.min(remain, 6500))
+    return checkSource(source, Math.min(remain, 4500))
   })
 }
 

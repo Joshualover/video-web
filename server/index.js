@@ -234,9 +234,29 @@ async function autoRefreshVod() {
   }
 }
 
+// 启动预热：只建立缓存，不强制重抓配置。getSources 内部有并发保护，
+// 与用户首次访问共享同一份抓取，避免重复请求源站导致卡顿。
+async function warmupVod() {
+  if (vodRefreshState.running) return
+  vodRefreshState.running = true
+  try {
+    const sources = await getSources()
+    await checkSources(sources, { deadline: 12000 })
+    vodRefreshState.lastAt = Date.now()
+    vodRefreshState.error = ''
+    console.log(`[vod] 启动预热完成：${sources.length} 个源`)
+  } catch (err) {
+    vodRefreshState.lastAt = Date.now()
+    vodRefreshState.error = err?.message || '预热失败'
+    console.error('[vod] 启动预热失败:', vodRefreshState.error)
+  } finally {
+    vodRefreshState.running = false
+  }
+}
+
 if (VOD_REFRESH_HOURS > 0) {
-  // 启动后预热一次，之后按间隔刷新
-  setTimeout(() => void autoRefreshVod(), 20000)
+  // 启动后预热缓存（避免重启后首次访问缓存为空而卡顿），之后按间隔强制刷新
+  setTimeout(() => void warmupVod(), 3000)
   setInterval(() => void autoRefreshVod(), VOD_REFRESH_HOURS * 3600 * 1000)
 }
 
