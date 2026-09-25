@@ -1,4 +1,5 @@
 import express from 'express'
+import compression from 'compression'
 import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { readdir, readFile, stat, writeFile, mkdir } from 'node:fs/promises'
@@ -33,6 +34,10 @@ import { listConfigs, addConfig, updateConfig, removeConfig } from './vod/config
 import { findBestLines } from './vod/best.js'
 
 const app = express()
+
+// gzip 压缩：m3u 播放列表（纯文本，可达 ~85% 压缩率）与前端 JS 都受益，
+// 显著改善 WiFi / 远程访问时的加载速度。
+app.use(compression())
 const PORT = Number(process.env.PORT) || 8787
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const distDir = path.resolve(__dirname, '../dist')
