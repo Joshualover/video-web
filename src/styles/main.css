@@ -2367,6 +2367,64 @@ input::placeholder {
   color: var(--accent);
 }
 
+/* ---- 频道分组页（方块网格） ---- */
+.groups-page {
+  width: min(1080px, 100%);
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+.group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.group-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.12s;
+}
+
+.group-tile:hover {
+  border-color: var(--accent);
+}
+
+.group-tile:active {
+  transform: scale(0.97);
+}
+
+.group-tile-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.group-tile-name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.group-tile-count {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
 /* ---- 频道浏览页（左分组 + 右列表，无播放器） ---- */
 .browse-wrap {
   padding: 16px 20px 28px;
@@ -2711,6 +2769,30 @@ input::placeholder {
     border-color: var(--accent);
     background: var(--accent-soft);
     color: var(--accent-strong);
+  }
+
+  .groups-page {
+    padding: 16px 12px 40px;
+  }
+
+  .group-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .group-tile {
+    padding: 16px 8px;
+    gap: 6px;
+  }
+
+  .group-tile-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+  }
+
+  .group-tile-name {
+    font-size: 13px;
   }
 
   .player-tools {

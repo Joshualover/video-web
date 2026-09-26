@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
   LayoutGrid,
@@ -19,15 +19,16 @@ import { usePlaylistStore } from '../stores/playlist'
 import { useUiStore } from '../stores/ui'
 
 const router = useRouter()
+const route = useRoute()
 const playlistStore = usePlaylistStore()
 const uiStore = useUiStore()
 
-const isMobile = ref(false)
-const isTablet = ref(false)
-const sidebarCollapsed = ref(false)
-const drawerOpen = ref(false)
 const mobileQuery = window.matchMedia('(max-width: 767px)')
 const tabletQuery = window.matchMedia('(max-width: 1023px)')
+const isMobile = ref(mobileQuery.matches)
+const isTablet = ref(tabletQuery.matches)
+const sidebarCollapsed = ref(false)
+const drawerOpen = ref(false)
 
 const activeGroupLabel = computed(() =>
   playlistStore.activeGroup === '全部'
@@ -53,6 +54,11 @@ function goHome() {
   router.push('/m3u')
 }
 
+function goBack() {
+  if (isMobile.value) router.push('/groups')
+  else router.push('/m3u')
+}
+
 // 点击频道：跳转到独立播放页
 function playChannel(channel) {
   if (!channel.valid) return
@@ -64,6 +70,10 @@ onMounted(() => {
   updateViewport()
   mobileQuery.addEventListener('change', updateViewport)
   tabletQuery.addEventListener('change', updateViewport)
+  // 从分组页进入（带 group 参数）则选中该分组
+  if (route.query.group) {
+    playlistStore.setActiveGroup(String(route.query.group))
+  }
 })
 
 onBeforeUnmount(() => {
@@ -85,7 +95,7 @@ onBeforeUnmount(() => {
 
     <div v-else class="browse-wrap">
       <header class="player-header">
-        <button class="icon-btn" type="button" title="返回 m3u 列表" @click="goHome">
+        <button class="icon-btn" type="button" :title="isMobile ? '返回分组' : '返回 m3u 列表'" @click="goBack">
           <ArrowLeft :size="18" />
         </button>
         <div class="header-info">
@@ -150,28 +160,6 @@ onBeforeUnmount(() => {
         <div v-if="drawerOpen && isTablet" class="drawer-backdrop" @click="drawerOpen = false"></div>
 
         <main class="browse-stage">
-          <!-- 移动端：分组横向切换 -->
-          <div v-if="isMobile" class="mobile-tabs">
-            <button
-              class="tab-chip"
-              :class="{ active: playlistStore.activeGroup === '全部' }"
-              type="button"
-              @click="playlistStore.setActiveGroup('全部')"
-            >
-              全部
-            </button>
-            <button
-              v-for="group in playlistStore.groups"
-              :key="group"
-              class="tab-chip"
-              :class="{ active: playlistStore.activeGroup === group }"
-              type="button"
-              @click="playlistStore.setActiveGroup(group)"
-            >
-              {{ group }}
-            </button>
-          </div>
-
           <!-- 频道面板：右侧，支持方块 / 列表两种视图 -->
           <section class="channel-pane">
             <div class="channel-pane-head">

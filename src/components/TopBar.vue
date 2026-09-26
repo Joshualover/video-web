@@ -33,7 +33,7 @@ const navItems = [
 
 const activeName = computed(() => {
   if (route.path === '/m3u') return 'm3u'
-  if (route.path === '/channels' || route.path === '/player') return '频道'
+  if (route.path === '/channels' || route.path === '/groups' || route.path === '/player') return '频道'
   if (route.path === '/favorites') return '收藏'
   if (route.path === '/recents') return '最近'
   if (route.path === '/search') return '搜片'
