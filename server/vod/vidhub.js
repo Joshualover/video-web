@@ -352,6 +352,8 @@ export async function resolvePlay(rawUrl) {
   const iframe = playPage.match(/<iframe[^>]+src="([^"]*\/player\/\?u=[^"]+)"/)
   if (!iframe) throw new Error('播放页解析失败（未找到播放器 iframe）')
   const playerUrl = absolute(iframe[1].replace(/&amp;/g, '&'))
+  // iframe 目标必须仍在站点域名内：否则页面被劫持/篡改时，服务端会跟着去抓任意地址
+  if (!isVidhubUrl(playerUrl)) throw new Error('播放器 iframe 指向了非本站地址，已拒绝')
 
   const playerHtml = await fetchText(playerUrl)
   const config = parsePlayerConfig(playerHtml)

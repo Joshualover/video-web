@@ -54,10 +54,18 @@ function cacheSet(store, key, value) {
 
 // 站点对突发请求敏感（实测连续请求会 SSL 中断 / 连不上），所以全局串行 + 最小间隔
 const MIN_GAP = 350
+// 排队上限：放大型接口（如全源搜索）一次会灌进几十个请求，队列无限增长时
+// 队尾要等 350ms × 队列长度，用户侧表现为「卡住不动」，不如早点拒绝
+const MAX_QUEUE = Math.max(Number(process.env.HGD_MAX_QUEUE) || 40, 1)
 let queue = Promise.resolve()
 let lastAt = 0
+let queued = 0
 
 function schedule(task) {
+  if (queued >= MAX_QUEUE) {
+    return Promise.reject(new Error('站点请求排队过多，请稍后再试'))
+  }
+  queued += 1
   const run = async () => {
     const wait = lastAt + MIN_GAP - Date.now()
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
@@ -69,7 +77,9 @@ function schedule(task) {
     () => undefined,
     () => undefined
   )
-  return result
+  return result.finally(() => {
+    queued -= 1
+  })
 }
 
 // 站点偶尔抽风（ECONNRESET / SSL 中断），重试一次

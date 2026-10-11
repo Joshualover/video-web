@@ -15,6 +15,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseM3u } from '../src/lib/m3u.js'
+import { assertPublicTarget } from './proxy-core.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DOMAIN_FILE = path.resolve(__dirname, '../data/crawl-domains.json')
@@ -69,14 +70,29 @@ export function isAllowedBase(base) {
 
 export const DEFAULT_BASE = process.env.CRAWL_BASE || getCrawlBases()[0]
 
-// 记录站点重定向时发现的新域名（内存 + 持久化）
-export function addDiscoveredDomain(rawUrl) {
+// 记录站点重定向时发现的新域名（内存 + 持久化）。
+// 站点轮换壳域名是正常行为，但这里等于「由远端页面决定服务端下一次访问谁」，
+// 所以先过一遍出网校验（拒绝内网/解析不到的域名），并给域名池加上限。
+const MAX_DISCOVERED_DOMAINS = Math.max(Number(process.env.CRAWL_MAX_DOMAINS) || 20, 1)
+
+export async function addDiscoveredDomain(rawUrl) {
   try {
     const u = new URL(rawUrl)
     const host = u.hostname.toLowerCase()
     if (!isValidDomain(host)) return null
     if (domainPool.includes(host)) return host
+    try {
+      await assertPublicTarget(`https://${host}`)
+    } catch (err) {
+      console.warn(`[crawler] 忽略重定向发现的可疑域名 ${host}：${err?.message || err}`)
+      return null
+    }
     domainPool.push(host)
+    const extras = domainPool.filter((d) => !BUILTIN_DOMAINS.includes(d))
+    for (const stale of extras.slice(0, Math.max(extras.length - MAX_DISCOVERED_DOMAINS, 0))) {
+      const idx = domainPool.indexOf(stale)
+      if (idx >= 0) domainPool.splice(idx, 1)
+    }
     try {
       mkdirSync(path.dirname(DOMAIN_FILE), { recursive: true })
       writeFileSync(
@@ -199,7 +215,7 @@ async function openSearchPage(page, keyword, base, retried = false) {
     }
     // 搜索页被重定向：跳回首页 / 换域名丢失 wd → 记录新域名并重试一次
     if (!curUrl.includes('/vodsearch/')) {
-      const newHost = addDiscoveredDomain(curUrl)
+      const newHost = await addDiscoveredDomain(curUrl)
       if (newHost) {
         const newBase = `https://${newHost}`
         if (newBase !== candidate && !retried) {
