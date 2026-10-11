@@ -47,12 +47,40 @@ const newPlaylist = reactive({ name: '', url: '' })
 const saving = ref(false)
 const formError = ref('')
 
+// 缓存占用直接读 localStorage，不是响应式数据：清理后必须手动刷新，否则数字永远不变
+const usageBytes = ref(libraryStore.usageBytes())
 const usageText = computed(() => {
-  const bytes = libraryStore.usageBytes()
+  const bytes = usageBytes.value
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 })
+
+function refreshUsage() {
+  usageBytes.value = libraryStore.usageBytes()
+}
+
+function clearRecents() {
+  libraryStore.clearRecents()
+  refreshUsage()
+}
+
+function clearFavorites() {
+  libraryStore.clearFavorites()
+  refreshUsage()
+}
+
+function clearSaved() {
+  libraryStore.clearSaved()
+  refreshUsage()
+}
+
+function clearAllData() {
+  // 一次性清空所有本地数据，不可撤销，必须二次确认
+  if (!window.confirm('将清空收藏、最近播放、已保存列表与本地设置（登录信息会保留），确定继续？')) return
+  libraryStore.clearAllData()
+  refreshUsage()
+}
 
 async function saveNewPlaylist() {
   const name = newPlaylist.name.trim()
@@ -415,16 +443,16 @@ async function handleServerUpload(event) {
           <span class="count-note">占用 {{ usageText }}</span>
         </div>
         <div class="cache-actions">
-          <button class="btn btn-secondary" type="button" @click="libraryStore.clearRecents()">
+          <button class="btn btn-secondary" type="button" @click="clearRecents">
             <Trash2 :size="15" /> 清空最近播放
           </button>
-          <button class="btn btn-secondary" type="button" @click="libraryStore.clearFavorites()">
+          <button class="btn btn-secondary" type="button" @click="clearFavorites">
             <Trash2 :size="15" /> 清空收藏
           </button>
-          <button class="btn btn-secondary" type="button" @click="libraryStore.clearSaved()">
+          <button class="btn btn-secondary" type="button" @click="clearSaved">
             <Trash2 :size="15" /> 清空已保存列表
           </button>
-          <button class="btn btn-danger" type="button" @click="libraryStore.clearAllData()">
+          <button class="btn btn-danger" type="button" @click="clearAllData">
             <Trash2 :size="15" /> 清空全部数据
           </button>
         </div>

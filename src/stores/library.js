@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { loadJson, saveJson, removeKey, clearPrefixedKeys, storageUsage } from '../lib/storage'
 import { useUiStore } from './ui'
+import { AUTH_KEY, SESSION_KEY } from './auth'
 
 const KEYS = {
   recents: 'recents',
@@ -172,8 +173,14 @@ export const useLibraryStore = defineStore('library', {
       this.recents = []
       this.favorites = []
       this.saved = []
+      // 保留登录信息：clearPrefixedKeys 会把 auth/auth-session 一并删掉，
+      // 造成「口令在无任何提示的情况下恢复成默认 admin/admin123，而内存里的登录态仍是 true」
+      const auth = loadJson(AUTH_KEY, null)
+      const session = loadJson(SESSION_KEY, null)
       clearPrefixedKeys()
-      useUiStore().toast('本地数据已全部清空')
+      if (auth) saveJson(AUTH_KEY, auth)
+      if (session !== null) saveJson(SESSION_KEY, session)
+      useUiStore().toast('本地数据已清空（登录信息已保留）')
     },
 
     // 导出所有本地数据为 JSON 备份（用于跨设备迁移）

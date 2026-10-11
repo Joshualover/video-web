@@ -3,6 +3,7 @@ import { loadJson, saveJson, removeKey } from '../lib/storage'
 
 const AUTH_KEY = 'auth'
 const SESSION_KEY = 'auth-session'
+export { AUTH_KEY, SESSION_KEY }
 const DEFAULT_USER = 'admin'
 const DEFAULT_PASS = 'admin123'
 
