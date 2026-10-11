@@ -30,6 +30,7 @@ const bestLoading = ref(false)
 const bestList = ref([])
 const bestError = ref('')
 const bestCacheAt = ref(0)
+let loadToken = 0
 
 const isFav = computed(
   () =>
@@ -105,11 +106,14 @@ function switchToSource(item) {
 }
 
 async function load() {
+  // 同 VodPlayerView：详情来自跨源抓取，快速切换时旧响应后到会覆盖新片数据
+  const token = (loadToken += 1)
   loading.value = true
   error.value = ''
   detail.value = null
   try {
     const data = await vodApi.detail(String(route.params.site), String(route.params.id))
+    if (token !== loadToken) return
     detail.value = data.detail
     siteName.value = data.siteName || ''
     activeLine.value = 0
@@ -117,9 +121,10 @@ async function load() {
     bestError.value = ''
     bestCacheAt.value = 0
   } catch (err) {
+    if (token !== loadToken) return
     error.value = err.message || '加载影片详情失败'
   } finally {
-    loading.value = false
+    if (token === loadToken) loading.value = false
   }
 }
 

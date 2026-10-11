@@ -44,6 +44,8 @@ const error = ref('')
 
 let pollTimer = null
 let activeTask = null
+let disposed = false // 离开页面后不再重启轮询、不再写状态
+let groupToken = 0 // 目标文件分组读取的请求序号
 
 // 关键词变化时，默认分组 = 关键词（新建分组）
 watch(keyword, (k) => {
@@ -55,17 +57,19 @@ watch(keyword, (k) => {
 
 // 选择目标文件后读取其现有分组
 watch(mergeTarget, async (name) => {
+  const token = (groupToken += 1)
   fileGroups.value = []
   if (!name || mode.value !== 'merge') return
   try {
     const resp = await fetch(`/api/playlists/content?name=${encodeURIComponent(name)}`, {
       headers: apiAuthHeaders()
     })
-    if (!resp.ok) return
+    if (!resp.ok || token !== groupToken) return
     const text = await resp.text()
+    if (token !== groupToken) return
     fileGroups.value = parseM3u(text).groups || []
   } catch {
-    fileGroups.value = []
+    if (token === groupToken) fileGroups.value = []
   }
 })
 
@@ -162,6 +166,8 @@ async function poll() {
       headers: apiAuthHeaders()
     })
     const data = await resp.json()
+    // 组件已卸载：不能再排下一次轮询，否则离开页面后还会一直请求（最长到任务结束）
+    if (disposed) return
     if (data.state === 'running') {
       if (activeTask.type === 'search') {
         searchInfo.value = '正在搜索，请稍候...'
@@ -245,6 +251,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   if (pollTimer) clearTimeout(pollTimer)
 })
 </script>

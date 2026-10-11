@@ -50,6 +50,7 @@ const skip = ref({ enable: false, intro: 0, outro: 0 })
 let player = null
 let triedProxy = false
 let applyToken = 0
+let loadToken = 0
 let autoTried = false
 let lastProgressSave = 0
 let stallTimer = null
@@ -453,6 +454,9 @@ async function togglePip() {
 }
 
 async function load() {
+  // 详情是跨源抓取，可能几秒才回来；期间用户切了影片（换源/连点卡片）时，
+  // 过期响应会覆盖新片数据、并把旧片名写进新片的播放历史，所以统一用序号丢弃过期结果。
+  const token = (loadToken += 1)
   loading.value = true
   error.value = ''
   detail.value = null
@@ -464,6 +468,7 @@ async function load() {
   skip.value = vodStore.getSkipConfig(favSite(), favId())
   try {
     const data = await vodApi.detail(String(route.params.site), String(route.params.id))
+    if (token !== loadToken) return
     detail.value = data.detail
     siteName.value = data.siteName || ''
     const line = Math.min(Math.max(Number(route.query.line) || 0, 0), Math.max(lines.value.length - 1, 0))
@@ -487,12 +492,16 @@ async function load() {
       })
     }
   } catch (err) {
+    if (token !== loadToken) return
     error.value = err.message || '加载失败'
   } finally {
-    loading.value = false
+    // loading 只允许最新一次请求收尾，否则旧请求会让新请求的加载态提前消失
+    if (token === loadToken) loading.value = false
   }
+  if (token !== loadToken) return
   // 播放器元素在 loading 结束后才渲染，需等 DOM 更新后再初始化
   await nextTick()
+  if (token !== loadToken) return
   initPlayer()
   if (!error.value && currentEpisode.value) applySource()
 }
