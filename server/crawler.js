@@ -19,6 +19,20 @@ import { parseM3u } from '../src/lib/m3u.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DOMAIN_FILE = path.resolve(__dirname, '../data/crawl-domains.json')
 
+// 单个页面脚本（evaluate）的最长耗时：Playwright 的 evaluate 不吃 timeout 参数，
+// 上游 fetch 永远不 settle 时会一直挂着，把全局任务锁占死（之后所有人的搜片都变 409）。
+const EVAL_TIMEOUT_MS = Math.max(Number(process.env.CRAWL_EVAL_TIMEOUT_MS) || 20000, 3000)
+
+function withTimeout(promise, ms, message) {
+  let timer
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms)
+    })
+  ]).finally(() => clearTimeout(timer))
+}
+
 // 内置壳域名（站点会轮换域名；发现新域名后自动加入并持久化到 data/crawl-domains.json）
 const BUILTIN_DOMAINS = ['444.aakck.cc', '678074.xyz', '678069.xyz', '678060.xyz', '678063.xyz', '678064.xyz']
 
@@ -205,11 +219,12 @@ async function openSearchPage(page, keyword, base, retried = false) {
 }
 
 // 收集搜索结果（支持翻页；域名失效或搜索页被重定向时自动切换域名重试）
-async function collectVodLinks(page, base, keyword, limit) {
+async function collectVodLinks(page, base, keyword, limit, shouldStop) {
   const searchUrl = await openSearchPage(page, keyword, base)
   const links = []
   const seen = new Set()
   for (let p = 1; p <= 8 && links.length < limit; p += 1) {
+    if (shouldStop?.()) throw new Error('任务已终止')
     const url = p === 1 ? searchUrl : `${searchUrl}&page=${p}`
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {})
     // 翻页时若页面被重定向/失效则停止继续翻页
@@ -219,7 +234,7 @@ async function collectVodLinks(page, base, keyword, limit) {
       await page.mouse.wheel(0, 1800)
       await page.waitForTimeout(200)
     }
-    const found = await page.evaluate(() => {
+    const found = await withTimeout(page.evaluate(() => {
       const out = []
       const local = new Set()
       for (const li of document.querySelectorAll('.stui-vodlist li, .stui-vodlist__box')) {
@@ -234,7 +249,8 @@ async function collectVodLinks(page, base, keyword, limit) {
         out.push({ title: title.slice(0, 150), href })
       }
       return out
-    })
+    }), EVAL_TIMEOUT_MS, '搜索结果脚本执行超时')
+      .catch(() => [])
     let newCount = 0
     for (const l of found) {
       if (!seen.has(l.href)) {
@@ -250,12 +266,13 @@ async function collectVodLinks(page, base, keyword, limit) {
 }
 
 // 详情页模拟解锁接口拿 m3u8（在多个候选域名间尝试，记录最近成功域名优先）
-async function fetchOne(page, bases, href) {
+async function fetchOne(page, bases, href, shouldStop) {
   for (const base of bases) {
+    if (shouldStop?.()) throw new Error('任务已终止')
     const host = String(base || '').replace(/^https?:\/\//, '').split('/')[0]
     await page.goto(base + href, { waitUntil: 'domcontentloaded', timeout: 12000 }).catch(() => {})
-    const r = await page
-      .evaluate(async () => {
+    const r = await withTimeout(
+      page.evaluate(async () => {
         const h1 = (document.querySelector('h1')?.textContent || document.title)
           .replace(/\s*-\s*黄色仓库.*$/, '')
           .trim()
@@ -285,8 +302,10 @@ async function fetchOne(page, bases, href) {
           await new Promise((res) => setTimeout(res, 500))
         }
         return { noAk: true }
-      })
-      .catch(() => ({ noAk: true }))
+      }),
+      EVAL_TIMEOUT_MS,
+      '详情页脚本执行超时'
+    ).catch(() => ({ noAk: true }))
     if (!r.noAk) {
       preferredBase = `https://${host}` // 记住成功域名
       return r
@@ -349,21 +368,24 @@ async function openBrowser() {
 }
 
 async function newPage(browser) {
-  return browser.newPage({
+  const page = await browser.newPage({
     viewport: { width: 1280, height: 900 },
     userAgent:
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
   })
+  // 兜底：导航/等待类操作的默认超时（evaluate 由 withTimeout 单独兜）
+  page.setDefaultTimeout(Math.max(EVAL_TIMEOUT_MS, 15000))
+  return page
 }
 
-export async function collectOnly(keyword, { base = DEFAULT_BASE, limit = 500 } = {}) {
+export async function collectOnly(keyword, { base = DEFAULT_BASE, limit = 500, shouldStop = null } = {}) {
   const cleanKeyword = String(keyword || '').trim()
   if (!cleanKeyword || cleanKeyword.length > 50) throw new Error('关键词无效')
   const cleanBase = String(base || '').replace(/\/+$/, '')
   const browser = await openBrowser()
   try {
     const page = await newPage(browser)
-    const vods = await collectVodLinks(page, cleanBase, cleanKeyword, limit)
+    const vods = await collectVodLinks(page, cleanBase, cleanKeyword, limit, shouldStop)
     return vods.map((v) => ({ title: v.title, href: v.href }))
   } finally {
     await browser.close().catch(() => {})
@@ -371,10 +393,11 @@ export async function collectOnly(keyword, { base = DEFAULT_BASE, limit = 500 } 
 }
 
 // 抓取一批详情页的 m3u8（进度回调 done/total）
-async function crawlItems(page, bases, items, onProgress) {
+async function crawlItems(page, bases, items, onProgress, shouldStop) {
   const results = []
   for (let i = 0; i < items.length; i += 1) {
-    const r = await fetchOne(page, bases, items[i].href)
+    if (shouldStop?.()) throw new Error('任务已终止')
+    const r = await fetchOne(page, bases, items[i].href, shouldStop)
     onProgress?.(i + 1, items.length, r.title)
     if (r.url) results.push({ title: r.title || items[i].title, url: r.url })
     await page.waitForTimeout(120)
@@ -476,7 +499,8 @@ export async function crawlAndSave({
   group = '',
   target = '',
   outDir = 'data',
-  onProgress = null
+  onProgress = null,
+  shouldStop = null
 } = {}) {
   const cleanBase = String(base || '').replace(/\/+$/, '')
   if (!items.length) throw new Error('未选择任何结果')
@@ -486,7 +510,7 @@ export async function crawlAndSave({
   const browser = await openBrowser()
   try {
     const page = await newPage(browser)
-    const results = await crawlItems(page, bases, items, onProgress)
+    const results = await crawlItems(page, bases, items, onProgress, shouldStop)
     if (!results.length) throw new Error('全部抓取失败')
     if (mode === 'merge') {
       const filePath = path.resolve(outDir, path.basename(target))
