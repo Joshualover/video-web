@@ -14,7 +14,6 @@ import { ALLOW_INSECURE_TLS, assertPublicTarget, sanitizeMediaContentType } from
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 const MAX_BYTES = 8 * 1024 * 1024
-const STRATEGY_ATTEMPTS = 3
 
 // host -> 已确认可用的 Referer 策略
 const refererHints = new Map()
@@ -44,7 +43,7 @@ export async function handleImageProxy(req, res) {
     return res.status(err.status || 403).json({ error: err.message || '目标地址不被允许' })
   }
   const hinted = refererHints.get(url.host)
-  fetchImage(req, url, res, { strategy: hinted ?? 0, tried: 0, viaProxy: true })
+  fetchImage(req, url, res, { strategy: hinted ?? 0, viaProxy: true })
 }
 
 function fetchImage(req, url, res, state) {
@@ -71,7 +70,7 @@ function fetchImage(req, url, res, state) {
       return
     }
     if (state.viaProxy) {
-      fetchImage(req, url, res, { strategy: 0, tried: state.tried + 1, viaProxy: false })
+      fetchImage(req, url, res, { strategy: 0, viaProxy: false })
       return
     }
     res.status(502).end()
@@ -130,5 +129,3 @@ function fetchImage(req, url, res, state) {
   upstream.on('error', () => retry())
   req.on('close', () => upstream.destroy())
 }
-
-export { STRATEGY_ATTEMPTS }
