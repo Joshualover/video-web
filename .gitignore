@@ -8,3 +8,6 @@ data/
 *.tmp.mjs
 e2e-*.png
 .env
+.env.*
+!.env.example
+.vercel
