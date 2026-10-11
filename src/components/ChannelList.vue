@@ -264,7 +264,7 @@ onBeforeUnmount(() => {
         :class="'card-' + uiStore.channelCardSize"
         :style="{ transform: `translateY(${gridOffset}px)` }"
       >
-      <button
+      <div
         v-for="channel in visibleGridChannels"
         :key="channel.id"
         class="channel-card"
@@ -273,9 +273,12 @@ onBeforeUnmount(() => {
           active: channel.id === playlistStore.activeChannelId,
           invalid: !channel.valid
         }"
-        type="button"
+        role="button"
+        tabindex="0"
         :title="channel.valid ? channel.name : '地址格式无效'"
         @click="selectChannel(channel)"
+        @keydown.enter.prevent="selectChannel(channel)"
+        @keydown.space.prevent="selectChannel(channel)"
       >
         <span class="channel-thumb">
           <img
@@ -298,7 +301,7 @@ onBeforeUnmount(() => {
         >
           <Heart :size="13" :fill="isFavorite(channel) ? 'currentColor' : 'none'" />
         </button>
-      </button>
+      </div>
       </div>
 
       <div v-if="!filtered.length" class="channel-empty">
@@ -312,7 +315,7 @@ onBeforeUnmount(() => {
       class="channel-list"
     >
       <div class="channel-list-inner" :style="{ height: totalHeight + 'px' }">
-        <button
+        <div
           v-for="(channel, index) in visibleChannels"
           :key="channel.id"
           class="channel-row"
@@ -321,9 +324,12 @@ onBeforeUnmount(() => {
             invalid: !channel.valid
           }"
           :style="{ transform: `translateY(${(startIndex + index) * ROW_HEIGHT}px)` }"
-          type="button"
+          role="button"
+          tabindex="0"
           :title="channel.valid ? channel.name : '地址格式无效'"
           @click="selectChannel(channel)"
+          @keydown.enter.prevent="selectChannel(channel)"
+          @keydown.space.prevent="selectChannel(channel)"
         >
           <span class="channel-logo">
             <img
@@ -349,7 +355,7 @@ onBeforeUnmount(() => {
           >
             <Heart :size="15" :fill="isFavorite(channel) ? 'currentColor' : 'none'" />
           </button>
-        </button>
+        </div>
       </div>
 
       <div v-if="!filtered.length" class="channel-empty">

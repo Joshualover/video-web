@@ -2253,6 +2253,19 @@ input::placeholder {
   min-height: 0;
 }
 
+/* 卡片/行是 div[role=button]（原来用 <button> 会把收藏按钮嵌进按钮里，HTML 非法），
+   所以按钮默认的 cursor 与键盘焦点样式要自己补上 */
+.channel-card,
+.channel-row {
+  cursor: pointer;
+}
+
+.channel-card:focus-visible,
+.channel-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .channel-grid {
   --card-min: 150px;
   display: grid;
