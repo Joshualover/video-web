@@ -5,7 +5,7 @@ import http from 'node:http'
 import https from 'node:https'
 import { httpGetText } from './maccms.js'
 import { agentFor, setRouteHint } from '../net.js'
-import { ALLOW_INSECURE_TLS, assertPublicTarget, sanitizeMediaContentType } from '../proxy-core.js'
+import { ALLOW_INSECURE_TLS, assertPublicTarget, sanitizeMediaContentType, tokenFromRequest } from '../proxy-core.js'
 import { isHgdPlayUrl, resolvePlay as resolveHgdPlay } from './hgdju.js'
 import { isVidhubPlayUrl, resolvePlay as resolveVidhubPlay } from './vidhub.js'
 
@@ -65,8 +65,11 @@ export async function resolveMediaUrl(rawUrl) {
         }
       }
     }
-  } catch {
-    // 解析失败则回退原地址
+  } catch (err) {
+    // 解析失败可以回退原地址，但「目标被出口校验拒绝」不能吞：吞掉会让调用方拿到
+    // 200 + 一个根本播不了的地址，排障时看不到真正原因（下游还会再拦一次，安全无碍）。
+    if (err?.status === 403 || err?.status === 400) throw err
+    console.warn(`[vod] 播放页解析失败，回退原地址：${url.hostname} - ${err?.message || err}`)
   }
 
   resolveCache.set(url.toString(), { url: resolved, at: Date.now() })
@@ -179,8 +182,9 @@ export async function handleHlsProxy(req, res) {
   } catch (err) {
     return res.status(err.status || 403).json({ error: err.message || '目标地址不被允许' })
   }
-  // 令牌链：<video> 发不出自定义头，所以把调用方的 token 透传给重写后的分片/密钥地址
-  fetchUpstream(req, res, url, { retried: false, token: String(req.query.token || '') })
+  // 令牌链：<video> 发不出自定义头，所以把调用方的 token 透传给重写后的分片/密钥地址。
+  // 用 tokenFromRequest 而不是只看 query —— 只带 Authorization 调用时也能正确透传。
+  fetchUpstream(req, res, url, { retried: false, token: tokenFromRequest(req) })
 }
 
 // 取上游：默认走代理（如果配了），失败（网络错误 / 4xx / 5xx）就换另一条路由重试一次。

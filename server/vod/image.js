@@ -109,7 +109,9 @@ function fetchImage(req, url, res, state) {
       if (total > MAX_BYTES) {
         aborted = true
         remote.destroy()
-        if (!res.writableEnded) res.end()
+        // 响应头已经发出，改不成 413 了；直接断开连接，让客户端明确感知「响应不完整」，
+        // 而不是拿到 200 + 静默截断的坏图（无 Content-Length 的 chunked 上游走的就是这一步）。
+        res.destroy()
         return
       }
       if (!res.write(chunk)) remote.pause()
