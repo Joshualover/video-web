@@ -114,6 +114,56 @@ app.use((req, res, next) => {
   next()
 })
 
+// ---- 轻量限流（无第三方依赖，进程内存态）----
+// 目的：挡住脚本循环调用「放大型」端点（全源搜索 / 选路 / 全量刷新 / 站内抓取），
+// 否则一次调用就会扇出几十次上游请求，既打满出口带宽也会让源站封掉本机 IP。
+// 0 = 关闭；部署在反向代理后面、需要真实客户端 IP 时设 TRUST_PROXY=1（否则按 socket 地址计）。
+const RATE_LIMIT_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_PER_MIN ?? 600) || 0, 0)
+const RATE_LIMIT_HEAVY_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_HEAVY_PER_MIN ?? 30) || 0, 0)
+const HEAVY_ROUTE_RE = /^\/api\/(vod\/search|vod\/best|site-search|site-crawl)/
+
+if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1)
+
+function isHeavyRoute(req) {
+  if (HEAVY_ROUTE_RE.test(req.path)) return true
+  if (req.path === '/api/vod/configs/refresh') return true
+  // ?check=1 / ?refresh=1 会触发全源健康检查或全量重抓，:id/check 同理
+  if (req.path === '/api/vod/sources' && (req.query.check === '1' || req.query.refresh === '1')) return true
+  if (req.path.startsWith('/api/vod/sources/')) return true
+  return false
+}
+
+const rateBuckets = new Map() // `${class}:${ip}` -> { count, resetAt }
+
+function hitRateLimit(key, limit) {
+  const now = Date.now()
+  const bucket = rateBuckets.get(key)
+  if (!bucket || bucket.resetAt <= now) {
+    if (rateBuckets.size > 5000) {
+      for (const [k, v] of rateBuckets) {
+        if (v.resetAt <= now) rateBuckets.delete(k)
+      }
+    }
+    rateBuckets.set(key, { count: 1, resetAt: now + 60_000 })
+    return 0
+  }
+  bucket.count += 1
+  if (bucket.count > limit) return Math.max(Math.ceil((bucket.resetAt - now) / 1000), 1)
+  return 0
+}
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api') || req.path === '/api/health') return next()
+  const heavy = isHeavyRoute(req)
+  const limit = heavy ? RATE_LIMIT_HEAVY_PER_MIN : RATE_LIMIT_PER_MIN
+  if (!limit) return next()
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown'
+  const retryAfter = hitRateLimit(`${heavy ? 'h' : 'n'}:${ip}`, limit)
+  if (!retryAfter) return next()
+  res.set('Retry-After', String(retryAfter))
+  return res.status(429).json({ error: `请求过于频繁，请 ${retryAfter} 秒后再试` })
+})
+
 function assertProxyToken(req, res, next) {
   if (!tokenAllowed(req.query.token, req.headers.authorization || '')) {
     return res.status(401).json({ error: '缺少有效的访问令牌' })
@@ -557,13 +607,57 @@ app.get('/api/vod/search', assertProxyToken, async (req, res) => {
 
 // ---- 站内搜索 / 抓取任务（两阶段） ----
 const crawlTasks = new Map()
-let crawlRunning = false
+let crawlRunning = null // 当前占用任务锁的 taskId（null = 空闲）
+
+// 任务级硬上限：到点后协作式终止并释放锁。
+// 否则一次脚本执行挂起就会把锁永久占住，之后所有人的搜片都只能拿到 409。
+const CRAWL_TASK_MAX_MS = Math.max(Number(process.env.CRAWL_TASK_MAX_MS) || 20 * 60 * 1000, 60 * 1000)
+const CRAWL_TASK_TTL_MS = Math.max(Number(process.env.CRAWL_TASK_TTL_MS) || 30 * 60 * 1000, 60 * 1000)
+
+function pruneTasks() {
+  const now = Date.now()
+  for (const [key, task] of crawlTasks) {
+    if (task.state === 'running') continue
+    if (now - (task.startedAt || now) > CRAWL_TASK_TTL_MS) crawlTasks.delete(key)
+  }
+}
 
 function cleanTaskMap() {
+  pruneTasks()
   if (crawlTasks.size <= 30) return
   for (const [k, t] of crawlTasks) {
     if (t.state !== 'running' && crawlTasks.size > 20) crawlTasks.delete(k)
   }
+}
+
+// 统一跑抓取类任务：占用/释放任务锁 + 看门狗超时（协作式终止）
+function runCrawlTask(task, job, fallbackMessage = '任务失败') {
+  let expired = false
+  const watchdog = setTimeout(() => {
+    expired = true
+    if (task.state === 'running') {
+      task.state = 'error'
+      task.error = `任务超过 ${Math.round(CRAWL_TASK_MAX_MS / 60000)} 分钟上限，已终止`
+    }
+    if (crawlRunning === task.id) crawlRunning = null
+    console.warn(`[crawler] 任务 ${task.id} 超过上限，已终止并释放任务锁`)
+  }, CRAWL_TASK_MAX_MS)
+
+  crawlRunning = task.id
+  void (async () => {
+    try {
+      await job(() => expired)
+    } catch (err) {
+      if (task.state === 'running') {
+        task.state = 'error'
+        task.error = err?.message || fallbackMessage
+      }
+    } finally {
+      clearTimeout(watchdog)
+      // 只释放自己的锁：看门狗可能已经放锁并让新任务接管
+      if (!expired && crawlRunning === task.id) crawlRunning = null
+    }
+  })()
 }
 
 // 阶段一：仅搜索，返回候选列表（不抓 m3u8）
@@ -592,19 +686,15 @@ app.post('/api/site-search', assertProxyToken, async (req, res) => {
   }
   crawlTasks.set(taskId, task)
   cleanTaskMap()
-  crawlRunning = true
-  void (async () => {
-    try {
-      const list = await collectOnly(wd, { base, limit })
+  runCrawlTask(
+    task,
+    async (stopped) => {
+      const list = await collectOnly(wd, { base, limit, shouldStop: stopped })
       task.state = 'done'
       task.items = list
-    } catch (err) {
-      task.state = 'error'
-      task.error = err.message || '搜索失败'
-    } finally {
-      crawlRunning = false
-    }
-  })()
+    },
+    '搜索失败'
+  )
   res.json({ ok: true, taskId })
 })
 
@@ -648,9 +738,9 @@ app.post('/api/site-crawl', assertProxyToken, async (req, res) => {
   }
   crawlTasks.set(taskId, task)
   cleanTaskMap()
-  crawlRunning = true
-  void (async () => {
-    try {
+  runCrawlTask(
+    task,
+    async (stopped) => {
       const r = await crawlAndSave({
         base,
         items,
@@ -658,6 +748,7 @@ app.post('/api/site-crawl', assertProxyToken, async (req, res) => {
         group,
         target,
         outDir: DATA_DIR,
+        shouldStop: stopped,
         onProgress: (done, total, title) => {
           task.done = done
           task.total = total
@@ -667,17 +758,14 @@ app.post('/api/site-crawl', assertProxyToken, async (req, res) => {
       task.state = 'done'
       task.file = r.file
       task.result = r
-    } catch (err) {
-      task.state = 'error'
-      task.error = err.message || '抓取失败'
-    } finally {
-      crawlRunning = false
-    }
-  })()
+    },
+    '抓取失败'
+  )
   res.json({ ok: true, taskId })
 })
 
 app.get('/api/site-search/status', assertProxyToken, (req, res) => {
+  pruneTasks()
   const task = crawlTasks.get(String(req.query.taskId || ''))
   if (!task) return res.status(404).json({ error: '任务不存在' })
   res.json({
