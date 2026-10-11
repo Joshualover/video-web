@@ -5,8 +5,12 @@ services:
     restart: always
     ports:
       - "8787:8787"
+    # 运行期数据（上传的播放列表、影视配置、源启停偏好）必须挂出来，否则容器重建即丢
+    volumes:
+      - ./data:/app/data
     environment:
       PORT: 8787
-      ALLOW_PRIVATE_NETWORK: "true"   # 公网部署建议改为 "false" 开启 SSRF 防护
-      ALLOW_INSECURE_TLS: "true"      # 跳过自签名证书校验
-      # PROXY_TOKEN: "your-secret-token"  # 可选：代理接口访问令牌
+      ALLOW_PRIVATE_NETWORK: "false"  # 默认关闭内网直连（SSRF 防护）；局域网/IPTV 直连需显式改回 "true"
+      ALLOW_INSECURE_TLS: "false"     # 默认校验证书；遇到自签名源站再改 "true"
+      # HOST: "0.0.0.0"               # 默认监听所有网卡（局域网设备可访问）；公网部署建议 "127.0.0.1" 并交给反向代理
+      # PROXY_TOKEN: "your-secret-token"  # 可选令牌；注意它不是授权边界（会随前端产物公开），公网请用反向代理鉴权

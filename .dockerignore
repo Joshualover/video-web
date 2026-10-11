@@ -1,0 +1,14 @@
+# 构建上下文最小化：避免把本机私有配置与运行期数据带进镜像层
+node_modules
+dist
+.vite
+data
+.git
+.gitignore
+.env
+.env.*
+*.log
+*.bak
+*.tmp.mjs
+e2e-*.png
+.DS_Store
