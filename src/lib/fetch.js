@@ -26,10 +26,12 @@ export async function fetchWithTimeout(url, timeout = DEFAULT_TIMEOUT, headers =
   }
 }
 
-function proxyHeaders() {
-  // 可选：构建时注入 VITE_PROXY_TOKEN 以访问设置了 PROXY_TOKEN 的代理服务
+// 所有 /api 调用统一带上的可选令牌。
+// 注意：VITE_PROXY_TOKEN 会被编译进前端产物、对任何访客可见 —— 它只能挡随机扫描器，
+// 不是授权边界；公网部署请让反向代理做真正的鉴权（见 README）。
+export function apiAuthHeaders(extra = {}) {
   const token = import.meta.env?.VITE_PROXY_TOKEN
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  return token ? { Authorization: `Bearer ${token}`, ...extra } : { ...extra }
 }
 
 export async function fetchRemoteText(url) {
@@ -41,7 +43,7 @@ export async function fetchRemoteText(url) {
       const text = await fetchWithTimeout(
         `/api/proxy?url=${encodeURIComponent(url)}`,
         12_000,
-        proxyHeaders()
+        apiAuthHeaders()
       )
       return { text, mode: 'proxy' }
     } catch (proxyError) {

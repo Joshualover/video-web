@@ -1,16 +1,24 @@
 // 苹果 CMS V10（MacCMS）采集接口封装
-// 仅负责「HTTP 取文本 + 解析 + 归一化字段」，所有请求目标都来自服务端白名单，
-// 不接受客户端直接传入任意 URL，避免 SSRF。
+// 仅负责「HTTP 取文本 + 解析 + 归一化字段」。
+// 注意：请求目标既可能来自内置源，也可能来自用户新增的配置仓库与播放地址，
+// 因此每次出网（含每次重定向）都先过 assertPublicTarget，不能再假设「都来自白名单」。
 import http from 'node:http'
 import https from 'node:https'
 import { agentFor } from '../net.js'
+import { ALLOW_INSECURE_TLS, assertPublicTarget } from '../proxy-core.js'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 
 const MAX_BODY = 12 * 1024 * 1024
 
-export function httpGetText(rawUrl, { timeout = 12000, maxRedirects = 4, headers = {}, proxy } = {}) {
+// 统一出网入口：先校验目标（默认拒绝内网/元数据地址，尊重 ALLOW_PRIVATE_NETWORK 开关），再发请求
+export async function httpGetText(rawUrl, opts = {}) {
+  await assertPublicTarget(String(rawUrl))
+  return requestText(rawUrl, opts)
+}
+
+function requestText(rawUrl, { timeout = 12000, maxRedirects = 4, headers = {}, proxy } = {}) {
   return new Promise((resolve, reject) => {
     let url
     try {
@@ -28,7 +36,7 @@ export function httpGetText(rawUrl, { timeout = 12000, maxRedirects = 4, headers
     const req = lib.get(
       url,
       {
-        rejectUnauthorized: false,
+        rejectUnauthorized: !ALLOW_INSECURE_TLS,
         agent: agentFor(url, { force }),
         headers: {
           'User-Agent': UA,

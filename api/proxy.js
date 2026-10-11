@@ -1,11 +1,14 @@
-import { proxyFetch, tokenAllowed } from '../server/proxy-core.js'
+import { proxyFetch, sanitizeProxyContentType, tokenAllowed } from '../server/proxy-core.js'
 
 export const config = {
   runtime: 'nodejs20.x'
 }
 
 function setCors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
+  // 默认只服务同源；需要跨源调用时设置 CORS_ORIGIN（"*" 或逗号分隔白名单）
+  if (process.env.CORS_ORIGIN === '*') res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox")
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
 }
@@ -31,7 +34,8 @@ export default async function handler(req, res) {
 
   try {
     const result = await proxyFetch(rawUrl)
-    res.setHeader('Content-Type', result.contentType)
+    // 只回传文本类类型：上游给 text/html 时不能原样落到本站 origin（同源 XSS）
+    res.setHeader('Content-Type', sanitizeProxyContentType(result.contentType))
     return res.status(200).send(result.text)
   } catch (err) {
     const status = err.status || 500

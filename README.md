@@ -49,7 +49,7 @@
 > 影视数据来自第三方采集接口，本项目不存储、不转码、不传播任何内容；可用性取决于对应源站。仅供本地学习使用。
 
 ### 其他
-- 登录保护：默认账号 `admin` / 密码 `admin123`（设置页可修改、退出）
+- 登录保护：默认账号 `admin` / 密码 `admin123`（设置页可修改、退出）。**注意这只是本地 UI 门槛**：口令与登录态都只存在浏览器 localStorage，服务端不校验它，不能当作访问控制
 - 白天/夜晚主题切换（顶部太阳/月亮按钮，跟随系统默认，记住选择）
 - 收藏、最近播放独立页面（各存 localStorage，可导出/导入 JSON 备份跨设备迁移）
 - 多播放列表管理（保存常用 URL，10 个）
@@ -81,27 +81,59 @@ VOD_HTTP_PROXY=http://127.0.0.1:7890 VOD_NO_PROXY=.example.com,10.0.0.5 npm star
 - 不配置时行为与以前完全一致（全部直连）
 - 源管理页会显示当前代理状态
 
-## 代理环境变量
+## 代理与安全环境变量
 
-内网访问默认开启。如需恢复 SSRF 防护（拒绝 localhost / 内网 IP）：
+### 出网校验（SSRF 防护）
+
+服务端**所有**出网请求都会先校验目标地址：`/api/proxy`、播放地址解析 `/api/vod/play`、HLS 代理 `/api/vod/hls`、图片代理 `/api/vod/image`、影视源配置抓取、站内搜片，以及每一次 HTTP 重定向。
+
+- 默认拒绝：`localhost`、回环、内网网段（含 `169.254.169.254` 云元数据、`100.64.0.0/10`、`198.18.0.0/15`、IPv4-mapped IPv6 等）与非 http/https 协议
+- 校验发生在**建立连接之前**（DNS 解析后立即判断），不是「请求发出去再丢弃响应」
+
+局域网/IPTV 这类**确实需要服务端直连内网**的场景，显式打开开关（开启后上述内网限制全部放行）：
 
 ```bash
-ALLOW_PRIVATE_NETWORK=false npm start
+ALLOW_PRIVATE_NETWORK=true npm start
 ```
 
-内网 HTTPS 服务常使用自签名证书，默认已跳过证书校验（`ALLOW_INSECURE_TLS=true`）。如需强制校验证书：
+上游证书默认校验；只有源站使用自签名证书时才降级（会降低安全性，尽量只对受信任源使用）：
 
 ```bash
-ALLOW_INSECURE_TLS=false npm start
+ALLOW_INSECURE_TLS=true npm start
 ```
 
-公网部署建议为接口设置访问令牌（否则任何网站都能借用代理，且搜索/上传接口可被他人调用）：
+### 访问令牌（PROXY_TOKEN）
+
+用于挡住随机扫描器：设置后所有 `/api` 接口都要求 `Authorization: Bearer <token>`（或 `?token=`）：
 
 ```bash
 PROXY_TOKEN=your-secret-token npm start
-# 前端构建时注入同名令牌（可选）
+# 前端构建时注入同名令牌，页面才能访问接口（可选）
 VITE_PROXY_TOKEN=your-secret-token npm run build
 ```
+
+> ⚠️ **令牌不是授权边界**：`VITE_PROXY_TOKEN` 会被编译进前端产物，任何访客都能从 JS 里读出来；
+> 前端「登录」（默认 `admin` / `admin123`）也只是本地 UI 门槛。公网部署请用反向代理
+> （Nginx/Caddy/1Panel 的 Basic Auth、OAuth 等）保护整个站点。
+
+### 跨域（CORS）
+
+默认只服务同源页面（前端由本服务托管时天然同源）。需要让其它站点/设备跨源调用接口时显式放行：
+
+```bash
+CORS_ORIGIN="*"                                          # 放行所有来源（不推荐）
+CORS_ORIGIN="https://a.example,http://192.168.1.9:5173"  # 白名单
+```
+
+### 监听地址（HOST）
+
+默认监听 `0.0.0.0`，局域网设备可直接访问。公网部署建议只监听回环、交给反向代理：
+
+```bash
+HOST=127.0.0.1 npm start
+```
+
+未设置 `PROXY_TOKEN` 且监听非回环地址时，启动日志会打印安全提示。
 
 ## 本地开发
 
@@ -142,7 +174,7 @@ node -e "import('./server/crawler.js').then(m=>console.log('浏览器:', m.findB
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FJoshualover%2Fvideo-web)
 
-环境变量：`ALLOW_PRIVATE_NETWORK=false`、`PROXY_TOKEN`、`VITE_PROXY_TOKEN`。
+环境变量：`ALLOW_PRIVATE_NETWORK=false`、`ALLOW_INSECURE_TLS=false`、`PROXY_TOKEN`、`VITE_PROXY_TOKEN`（`ALLOW_PRIVATE_NETWORK`/`ALLOW_INSECURE_TLS` 现在已是默认值，显式写上只为便于审阅）。
 
 ## 1Panel 部署（自有服务器，推荐）
 
@@ -151,10 +183,10 @@ node -e "import('./server/crawler.js').then(m=>console.log('浏览器:', m.findB
 1. 1Panel → 运行环境 → Node.js → 安装 Node 20
 2. 服务器：`git clone https://github.com/Joshualover/video-web.git && cd video-web && npm install && npm run build`
 3. 1Panel → 网站 → Node 项目 → 创建：源码目录 /opt/video-web、启动文件 `server/index.js`、端口 8787、Node 版本 20
-4. 环境变量：`PORT=8787`、`ALLOW_PRIVATE_NETWORK=true`、`ALLOW_INSECURE_TLS=true`；搜片需 `BROWSER_PATH`（见上）
+4. 环境变量：`PORT=8787`、`HOST=127.0.0.1`（反代在本机，公网只需暴露 443）；搜片需 `BROWSER_PATH`（见上）。如果媒体地址在内网（局域网 IPTV 等）再加 `ALLOW_PRIVATE_NETWORK=true`；源站自签名证书再加 `ALLOW_INSECURE_TLS=true`
 5. 绑定域名 + HTTPS（Let's Encrypt 自动反代到 127.0.0.1:8787）
 
-Docker 方式：仓库含 `Dockerfile` / `docker-compose.yml`（构建阶段需含浏览器：请参考 Dockerfile 注释自行添加 chromium 安装层）。
+Docker 方式：仓库含 `Dockerfile` / `docker-compose.yml`（`data/` 已声明为挂载卷，容器重建不丢数据）。镜像内**不含** Chromium，所以容器里的「站内搜片」不可用；需要时在运行阶段镜像里自行安装 chromium 并设置 `BROWSER_PATH`（参考上面「部署要求（搜片功能）」）。
 
 ## 目录结构
 

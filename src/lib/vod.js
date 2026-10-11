@@ -1,4 +1,6 @@
 // 影视聚合接口客户端（对应 server 端 /api/vod/*）
+import { apiAuthHeaders } from './fetch.js'
+
 async function apiGet(path, params = {}) {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
@@ -6,7 +8,7 @@ async function apiGet(path, params = {}) {
     query.set(key, String(value))
   }
   const url = query.toString() ? `${path}?${query}` : path
-  const resp = await fetch(url)
+  const resp = await fetch(url, { headers: apiAuthHeaders() })
   const data = await resp.json().catch(() => ({}))
   if (!resp.ok) throw new Error(data.error || `请求失败（${resp.status}）`)
   return data
@@ -15,7 +17,7 @@ async function apiGet(path, params = {}) {
 async function apiSend(path, body, method = 'POST') {
   const resp = await fetch(path, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: apiAuthHeaders({ 'Content-Type': 'application/json' }),
     body: body ? JSON.stringify(body) : undefined
   })
   const data = await resp.json().catch(() => ({}))

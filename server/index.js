@@ -6,8 +6,12 @@ import { readdir, readFile, stat, writeFile, mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import crypto from 'node:crypto'
 import {
+  ALLOW_PRIVATE_NETWORK,
+  PROXY_TOKEN,
   proxyFetch,
-  tokenAllowed
+  sanitizeProxyContentType,
+  tokenAllowed,
+  tokenFromRequest
 } from './proxy-core.js'
 import { collectOnly, crawlAndSave, isAllowedBase, getCrawlBases } from './crawler.js'
 import {
@@ -34,6 +38,7 @@ import { listConfigs, addConfig, updateConfig, removeConfig } from './vod/config
 import { findBestLines } from './vod/best.js'
 
 const app = express()
+app.disable('x-powered-by')
 
 // gzip 压缩：m3u 播放列表（纯文本，可达 ~85% 压缩率）与前端 JS 都受益，
 // 显著改善 WiFi / 远程访问时的加载速度。
@@ -76,12 +81,34 @@ async function listDataFiles() {
   return files
 }
 
+// CORS：默认只服务同源页面（生产下前端由本服务托管，天然同源）。
+// 需要让其它站点/设备跨源调用时显式设置 CORS_ORIGIN（"*" 或逗号分隔的白名单）。
+const CORS_ORIGIN = (process.env.CORS_ORIGIN || '').trim()
+
+function resolveCorsOrigin(origin) {
+  if (!CORS_ORIGIN || !origin) return ''
+  if (CORS_ORIGIN === '*') return '*'
+  const list = CORS_ORIGIN.split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+  return list.includes(origin) ? origin : ''
+}
+
 app.use(express.json({ limit: '1mb' }))
 app.use((req, res, next) => {
+  // 上游内容不可信：禁止浏览器对响应做 MIME 嗅探
+  res.set('X-Content-Type-Options', 'nosniff')
   if (req.path.startsWith('/api')) {
-    res.set('Access-Control-Allow-Origin', '*')
-    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-    res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    // API 只产出 JSON / 文本 / 媒体，任何情况下都不该在响应里执行脚本
+    res.set('Content-Security-Policy', "default-src 'none'; sandbox")
+    res.set('Referrer-Policy', 'no-referrer')
+    const allowed = resolveCorsOrigin(req.headers.origin)
+    if (allowed) {
+      res.set('Access-Control-Allow-Origin', allowed)
+      res.set('Vary', 'Origin')
+      res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+      res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    }
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204)
   next()
@@ -105,7 +132,8 @@ app.get('/api/proxy', assertProxyToken, async (req, res) => {
   }
   try {
     const result = await proxyFetch(rawUrl)
-    res.set('Content-Type', result.contentType)
+    // 只回传文本类类型：上游给 text/html 时不能原样落到本站 origin（同源 XSS）
+    res.set('Content-Type', sanitizeProxyContentType(result.contentType))
     res.send(result.text)
   } catch (err) {
     const status = err.status || 500
@@ -116,12 +144,12 @@ app.get('/api/proxy', assertProxyToken, async (req, res) => {
 
 // ---- data 目录播放列表管理 ----
 
-app.get('/api/playlists', async (_req, res) => {
+app.get('/api/playlists', assertProxyToken, async (_req, res) => {
   const files = await listDataFiles()
   res.json({ files })
 })
 
-app.get('/api/playlists/content', async (req, res) => {
+app.get('/api/playlists/content', assertProxyToken, async (req, res) => {
   const name = safeDataName(req.query.name)
   if (!name) return res.status(400).json({ error: '文件名非法' })
   try {
@@ -163,12 +191,15 @@ app.get('/api/crawl-domains', assertProxyToken, (_req, res) => {
 })
 
 // 解析播放地址（网页播放页 → 真实 m3u8），返回可直接播放的代理地址
-app.get('/api/vod/play', async (req, res) => {
+app.get('/api/vod/play', assertProxyToken, async (req, res) => {
   const raw = String(req.query.url || '')
   if (!isHttpUrl(raw)) return res.status(400).json({ error: 'url 参数非法' })
   try {
     const url = await resolveMediaUrl(raw)
-    res.json({ url, playUrl: `/api/vod/hls?url=${encodeURIComponent(url)}` })
+    // 令牌链：生成的播放地址必须把调用方令牌带上，否则 <video> 拿不到 Authorization 会 401
+    const token = tokenFromRequest(req)
+    const suffix = token ? `&token=${encodeURIComponent(token)}` : ''
+    res.json({ url, playUrl: `/api/vod/hls?url=${encodeURIComponent(url)}${suffix}` })
   } catch (err) {
     vodError(res, err, '解析播放地址失败')
   }
@@ -181,11 +212,11 @@ app.get('/api/vod/hls', assertProxyToken, handleHlsProxy)
 app.get('/api/vod/image', assertProxyToken, handleImageProxy)
 
 // 豆瓣热门榜单（发现页用，不依赖任何采集源）
-app.get('/api/vod/douban/options', (_req, res) => {
+app.get('/api/vod/douban/options', assertProxyToken, (_req, res) => {
   res.json({ kinds: doubanOptions() })
 })
 
-app.get('/api/vod/douban/hot', async (req, res) => {
+app.get('/api/vod/douban/hot', assertProxyToken, async (req, res) => {
   try {
     const data = await fetchDoubanHot({
       kind: String(req.query.kind || 'movie'),
@@ -204,7 +235,10 @@ app.get('/api/vod/douban/hot', async (req, res) => {
 
 function vodError(res, err, fallbackMessage = '影视源请求失败') {
   const message = err?.message || fallbackMessage
-  res.status(502).json({ error: message })
+  // 出口校验拒绝（400/403）等明确状态原样透出，其余按上游失败处理
+  const raw = Number(err?.status)
+  const status = raw >= 400 && raw < 600 ? raw : 502
+  res.status(status).json({ error: message })
 }
 
 // ---- 影视配置定时自动刷新 ----
@@ -261,7 +295,7 @@ if (VOD_REFRESH_HOURS > 0) {
 }
 
 // 可用影视源列表（带健康状态 + 自动刷新元信息）
-app.get('/api/vod/sources', async (req, res) => {
+app.get('/api/vod/sources', assertProxyToken, async (req, res) => {
   try {
     const refresh = req.query.refresh === '1'
     const sources = await getSources({ refresh })
@@ -285,7 +319,7 @@ app.get('/api/vod/sources', async (req, res) => {
 })
 
 // 单个源的启用/停用（源级偏好，持久化到 data/vod-source-prefs.json）
-app.put('/api/vod/sources/:id', async (req, res) => {
+app.put('/api/vod/sources/:id', assertProxyToken, async (req, res) => {
   try {
     const source = await resolveSource(String(req.params.id))
     if (!source) return res.status(404).json({ error: '源不存在' })
@@ -298,7 +332,7 @@ app.put('/api/vod/sources/:id', async (req, res) => {
 })
 
 // 单个源健康检测（源管理页「测试」按钮）
-app.post('/api/vod/sources/:id/check', async (req, res) => {
+app.post('/api/vod/sources/:id/check', assertProxyToken, async (req, res) => {
   try {
     const source = await resolveSource(String(req.params.id))
     if (!source) return res.status(404).json({ error: '源不存在' })
@@ -331,7 +365,7 @@ async function configsWithStatus() {
   }))
 }
 
-app.get('/api/vod/configs', async (_req, res) => {
+app.get('/api/vod/configs', assertProxyToken, async (_req, res) => {
   try {
     res.json({ configs: await configsWithStatus() })
   } catch (err) {
@@ -339,7 +373,7 @@ app.get('/api/vod/configs', async (_req, res) => {
   }
 })
 
-app.post('/api/vod/configs', async (req, res) => {
+app.post('/api/vod/configs', assertProxyToken, async (req, res) => {
   try {
     const item = await addConfig({
       name: req.body?.name,
@@ -353,7 +387,7 @@ app.post('/api/vod/configs', async (req, res) => {
   }
 })
 
-app.put('/api/vod/configs/:id', async (req, res) => {
+app.put('/api/vod/configs/:id', assertProxyToken, async (req, res) => {
   try {
     const item = await updateConfig(req.params.id, req.body || {})
     invalidateSources({ configId: item.id })
@@ -363,7 +397,7 @@ app.put('/api/vod/configs/:id', async (req, res) => {
   }
 })
 
-app.delete('/api/vod/configs/:id', async (req, res) => {
+app.delete('/api/vod/configs/:id', assertProxyToken, async (req, res) => {
   try {
     await removeConfig(req.params.id)
     invalidateSources({ configId: req.params.id })
@@ -374,7 +408,7 @@ app.delete('/api/vod/configs/:id', async (req, res) => {
 })
 
 // 重新抓取配置（可指定单个 id）
-app.post('/api/vod/configs/refresh', async (req, res) => {
+app.post('/api/vod/configs/refresh', assertProxyToken, async (req, res) => {
   try {
     const id = req.body?.id ? String(req.body.id) : null
     await refreshConfigs(id)
@@ -385,7 +419,7 @@ app.post('/api/vod/configs/refresh', async (req, res) => {
 })
 
 // 多源同片自动选最快线路
-app.get('/api/vod/best', async (req, res) => {
+app.get('/api/vod/best', assertProxyToken, async (req, res) => {
   const wd = String(req.query.wd || '').trim()
   if (!wd) return res.status(400).json({ error: '缺少 wd 参数' })
   const year = String(req.query.year || '').trim()
@@ -399,7 +433,7 @@ app.get('/api/vod/best', async (req, res) => {
 })
 
 // 分类列表
-app.get('/api/vod/categories', async (req, res) => {
+app.get('/api/vod/categories', assertProxyToken, async (req, res) => {
   const source = await resolveSource(String(req.query.site || ''))
   if (!source) return res.status(404).json({ error: '影视源不存在' })
   try {
@@ -413,7 +447,7 @@ app.get('/api/vod/categories', async (req, res) => {
 })
 
 // 分类列表（分页）
-app.get('/api/vod/list', async (req, res) => {
+app.get('/api/vod/list', assertProxyToken, async (req, res) => {
   const source = await resolveSource(String(req.query.site || ''))
   if (!source) return res.status(404).json({ error: '影视源不存在' })
   const page = Math.min(Math.max(Number(req.query.page) || 1, 1), 1000)
@@ -429,7 +463,7 @@ app.get('/api/vod/list', async (req, res) => {
 })
 
 // 详情（含线路与剧集播放地址）
-app.get('/api/vod/detail', async (req, res) => {
+app.get('/api/vod/detail', assertProxyToken, async (req, res) => {
   const source = await resolveSource(String(req.query.site || ''))
   if (!source) return res.status(404).json({ error: '影视源不存在' })
   const id = String(req.query.id || '')
@@ -446,7 +480,7 @@ app.get('/api/vod/detail', async (req, res) => {
 })
 
 // 聚合搜索：并发查询多个源，按 名称+年份 去重
-app.get('/api/vod/search', async (req, res) => {
+app.get('/api/vod/search', assertProxyToken, async (req, res) => {
   const wd = String(req.query.wd || '').trim()
   if (!wd) return res.status(400).json({ error: '缺少搜索关键词' })
   const limit = Math.min(Math.max(Number(req.query.limit) || 120, 1), 200)
@@ -643,7 +677,7 @@ app.post('/api/site-crawl', assertProxyToken, async (req, res) => {
   res.json({ ok: true, taskId })
 })
 
-app.get('/api/site-search/status', (req, res) => {
+app.get('/api/site-search/status', assertProxyToken, (req, res) => {
   const task = crawlTasks.get(String(req.query.taskId || ''))
   if (!task) return res.status(404).json({ error: '任务不存在' })
   res.json({
@@ -684,9 +718,41 @@ if (existsSync(distDir)) {
   })
 }
 
+// /api 下未匹配的路径统一返回 JSON 404，避免前端把 HTML 错误页当成后端故障
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: '接口不存在' })
+})
+
+// 统一错误处理：对外只给通用文案，细节留在服务端日志（避免泄漏上游/内网信息到响应体）
+app.use((err, _req, res, _next) => {
+  const status = err?.status || 500
+  console.error('[flow-player] 请求处理失败:', err)
+  if (res.headersSent) {
+    res.end()
+    return
+  }
+  res.status(status).json({ error: status >= 500 ? '服务器内部错误' : err?.message || '请求失败' })
+})
+
 // data 目录被 .gitignore 忽略（不随代码部署），启动时自动创建
 await mkdir(DATA_DIR, { recursive: true })
 
-app.listen(PORT, () => {
-  console.log(`[flow-player] API 代理已启动: http://localhost:${PORT}`)
+const HOST = process.env.HOST || '0.0.0.0'
+
+app.listen(PORT, HOST, () => {
+  console.log(`[flow-player] API 代理已启动: http://${HOST}:${PORT}`)
+  // 启动自检：把「默认对公网不安全」的组合显式喊出来
+  if (!PROXY_TOKEN && !['127.0.0.1', 'localhost', '::1'].includes(HOST)) {
+    console.warn(
+      '[flow-player] 安全提示：未设置 PROXY_TOKEN 且监听 %s —— 任何能访问该端口的设备都可调用全部接口。' +
+        '公网部署请设置 PROXY_TOKEN，或让反向代理做鉴权，并建议 HOST=127.0.0.1。',
+      HOST
+    )
+  }
+  if (ALLOW_PRIVATE_NETWORK) {
+    console.warn(
+      '[flow-player] 安全提示：ALLOW_PRIVATE_NETWORK=true，服务端可直连内网/云元数据地址（SSRF 防护关闭）。' +
+        '仅在你确实需要局域网/IPTV 直连时保持开启。'
+    )
+  }
 })

@@ -3,6 +3,7 @@ import crypto from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assertPublicTarget } from '../proxy-core.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.resolve(__dirname, '../../data')
@@ -60,6 +61,8 @@ export async function listConfigs() {
 export async function addConfig({ name, url, group }) {
   const cleanUrl = String(url || '').trim()
   if (!/^https?:\/\//i.test(cleanUrl)) throw new Error('配置地址需以 http/https 开头')
+  // 配置地址会被服务端反复抓取并持久化，落库前必须过出网校验（否则等于把 SSRF 目标存下来）
+  await assertPublicTarget(cleanUrl)
   const list = await listConfigs()
   if (list.some((c) => c.url === cleanUrl)) throw new Error('该配置地址已存在')
   const item = normalize({ name, url: cleanUrl, group, enabled: true, custom: true })
@@ -79,6 +82,7 @@ export async function updateConfig(id, patch = {}) {
   if (patch.url !== undefined) {
     const cleanUrl = String(patch.url).trim()
     if (!/^https?:\/\//i.test(cleanUrl)) throw new Error('配置地址需以 http/https 开头')
+    await assertPublicTarget(cleanUrl)
     item.url = cleanUrl
   }
   await persist(list)

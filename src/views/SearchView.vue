@@ -16,6 +16,7 @@ import {
 import { usePlaylistStore } from '../stores/playlist'
 import { useUiStore } from '../stores/ui'
 import { parseM3u } from '../lib/m3u'
+import { apiAuthHeaders } from '../lib/fetch'
 
 const router = useRouter()
 const playlistStore = usePlaylistStore()
@@ -57,7 +58,9 @@ watch(mergeTarget, async (name) => {
   fileGroups.value = []
   if (!name || mode.value !== 'merge') return
   try {
-    const resp = await fetch(`/api/playlists/content?name=${encodeURIComponent(name)}`)
+    const resp = await fetch(`/api/playlists/content?name=${encodeURIComponent(name)}`, {
+      headers: apiAuthHeaders()
+    })
     if (!resp.ok) return
     const text = await resp.text()
     fileGroups.value = parseM3u(text).groups || []
@@ -94,7 +97,7 @@ async function startSearch() {
   try {
     const resp = await fetch('/api/site-search', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ wd: keyword.value.trim(), base: base.value, limit: 500 })
     })
     const data = await resp.json().catch(() => ({}))
@@ -128,7 +131,7 @@ async function startCrawl() {
   try {
     const resp = await fetch('/api/site-crawl', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         wd: keyword.value.trim(),
         base: base.value,
@@ -155,7 +158,9 @@ async function startCrawl() {
 async function poll() {
   if (!activeTask) return
   try {
-    const resp = await fetch(`/api/site-search/status?taskId=${activeTask.id}`)
+    const resp = await fetch(`/api/site-search/status?taskId=${activeTask.id}`, {
+      headers: apiAuthHeaders()
+    })
     const data = await resp.json()
     if (data.state === 'running') {
       if (activeTask.type === 'search') {
@@ -227,7 +232,7 @@ function resetAll() {
 onMounted(async () => {
   playlistStore.fetchServerFiles()
   try {
-    const resp = await fetch('/api/crawl-domains')
+    const resp = await fetch('/api/crawl-domains', { headers: apiAuthHeaders() })
     const data = await resp.json().catch(() => ({}))
     if (Array.isArray(data.bases) && data.bases.length) {
       crawlBases.value = data.bases

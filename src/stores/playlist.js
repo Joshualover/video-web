@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { parseM3u, isValidStreamUrl, urlBasename } from '../lib/m3u'
-import { fetchRemoteText } from '../lib/fetch'
+import { fetchRemoteText, apiAuthHeaders } from '../lib/fetch'
 import { SAMPLE_PLAYLIST } from '../lib/samples'
 
 function looksLikeHtml(content) {
@@ -136,7 +136,9 @@ export const usePlaylistStore = defineStore('playlist', {
       this.loadError = null
       this.loadStage = '正在读取服务器列表...'
       try {
-        const response = await fetch(`/api/playlists/content?name=${encodeURIComponent(name)}`)
+        const response = await fetch(`/api/playlists/content?name=${encodeURIComponent(name)}`, {
+          headers: apiAuthHeaders()
+        })
         if (!response.ok) throw new Error('读取服务器文件失败')
         const text = await response.text()
         this.loadStage = '正在解析频道列表...'
@@ -166,7 +168,7 @@ export const usePlaylistStore = defineStore('playlist', {
     async fetchServerFiles() {
       this.serverFilesLoading = true
       try {
-        const response = await fetch('/api/playlists')
+        const response = await fetch('/api/playlists', { headers: apiAuthHeaders() })
         if (!response.ok) throw new Error('接口不可用')
         const data = await response.json()
         this.serverFiles = Array.isArray(data.files) ? data.files : []
@@ -183,7 +185,7 @@ export const usePlaylistStore = defineStore('playlist', {
       try {
         const response = await fetch(`/api/playlists?name=${encodeURIComponent(name)}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
+          headers: apiAuthHeaders({ 'Content-Type': 'text/plain' }),
           body: await file.text()
         })
         if (!response.ok) {

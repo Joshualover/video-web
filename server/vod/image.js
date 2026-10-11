@@ -9,6 +9,7 @@
 import http from 'node:http'
 import https from 'node:https'
 import { agentFor } from '../net.js'
+import { ALLOW_INSECURE_TLS, assertPublicTarget, sanitizeMediaContentType } from '../proxy-core.js'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
@@ -25,7 +26,7 @@ function refererStrategies(url) {
   return list
 }
 
-export function handleImageProxy(req, res) {
+export async function handleImageProxy(req, res) {
   const raw = String(req.query.url || '')
   let url
   try {
@@ -35,6 +36,12 @@ export function handleImageProxy(req, res) {
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return res.status(400).json({ error: 'url 参数非法' })
+  }
+  try {
+    // 出口校验：否则 ?url= 就是一条无校验的任意地址读取通道
+    await assertPublicTarget(url.toString())
+  } catch (err) {
+    return res.status(err.status || 403).json({ error: err.message || '目标地址不被允许' })
   }
   const hinted = refererHints.get(url.host)
   fetchImage(req, url, res, { strategy: hinted ?? 0, tried: 0, viaProxy: true })
@@ -70,9 +77,10 @@ function fetchImage(req, url, res, state) {
     res.status(502).end()
   }
 
-  const upstream = lib.get(url, { rejectUnauthorized: false, agent, headers, timeout: 15000 }, (remote) => {
+  const upstream = lib.get(url, { rejectUnauthorized: !ALLOW_INSECURE_TLS, agent, headers, timeout: 15000 }, (remote) => {
     const code = remote.statusCode || 0
-    if (code >= 400 || code < 200) {
+    if (code < 200 || code >= 300) {
+      // 3xx 以前被当成成功：结果返回 200 + 空图，还把该 host 的错误 Referer 策略记下来
       remote.resume()
       retry()
       return
@@ -85,12 +93,35 @@ function fetchImage(req, url, res, state) {
       return
     }
     settled = true
+    if (refererHints.size > 500) refererHints.clear() // 防止可控域名把这张表撑大
     refererHints.set(url.host, index)
-    res.set('Content-Type', remote.headers['content-type'] || 'image/jpeg')
+    res.set('Content-Type', sanitizeMediaContentType(remote.headers['content-type'], 'application/octet-stream'))
     res.set('Cache-Control', 'public, max-age=86400')
     res.set('Access-Control-Allow-Origin', '*')
-    remote.pipe(res)
-    remote.on('error', () => res.end())
+    // content-length 不可信（可能是 chunked 或谎报），按实际字节数再兜一层上限。
+    // 注意不能用 remote.pipe(res)：超限时先 res.end()，pipe 仍会对已结束的响应继续 write，
+    // 触发 ERR_STREAM_WRITE_AFTER_END（未捕获异常会带崩整个进程），所以手动搬运并处理背压。
+    let total = 0
+    let aborted = false
+    remote.on('data', (chunk) => {
+      if (aborted) return
+      total += chunk.length
+      if (total > MAX_BYTES) {
+        aborted = true
+        remote.destroy()
+        if (!res.writableEnded) res.end()
+        return
+      }
+      if (!res.write(chunk)) remote.pause()
+    })
+    remote.on('end', () => {
+      if (!aborted && !res.writableEnded) res.end()
+    })
+    remote.on('error', () => {
+      if (!aborted && !res.writableEnded) res.end()
+    })
+    res.on('drain', () => remote.resume())
+    res.on('close', () => remote.destroy())
   })
 
   upstream.on('timeout', () => upstream.destroy(new Error('请求超时')))

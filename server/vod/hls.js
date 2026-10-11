@@ -5,6 +5,7 @@ import http from 'node:http'
 import https from 'node:https'
 import { httpGetText } from './maccms.js'
 import { agentFor, setRouteHint } from '../net.js'
+import { ALLOW_INSECURE_TLS, assertPublicTarget, sanitizeMediaContentType } from '../proxy-core.js'
 import { isHgdPlayUrl, resolvePlay as resolveHgdPlay } from './hgdju.js'
 import { isVidhubPlayUrl, resolvePlay as resolveVidhubPlay } from './vidhub.js'
 
@@ -36,6 +37,8 @@ export async function resolveMediaUrl(rawUrl) {
     throw new Error('播放地址非法')
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('播放地址非法')
+  // 出口校验：内网/元数据地址直接拒绝，与 /api/vod/hls、/api/vod/image 保持一致
+  await assertPublicTarget(url.toString())
   if (MEDIA_EXT_RE.test(url.pathname)) return url.toString()
 
   // 短剧源（黄瓜短剧）：播放页里的 m3u8 是 JSON 转义的（&），通用正则抠不出来，走专用解析
@@ -74,11 +77,12 @@ export async function resolveMediaUrl(rawUrl) {
   return resolved
 }
 
-function rewritePlaylist(text, baseUrl) {
+function rewritePlaylist(text, baseUrl, token = '') {
+  const suffix = token ? `&token=${encodeURIComponent(token)}` : ''
   const proxify = (value) => {
     try {
       const abs = new URL(value, baseUrl).toString()
-      return `/api/vod/hls?url=${encodeURIComponent(abs)}`
+      return `/api/vod/hls?url=${encodeURIComponent(abs)}${suffix}`
     } catch {
       return value
     }
@@ -98,38 +102,47 @@ function rewritePlaylist(text, baseUrl) {
 }
 
 // 探测媒体地址可用性与延迟（HEAD 不可靠，这里用 GET 拿到首包即断开）
-function probeOnce(url, timeout) {
+const MAX_PROBE_REDIRECTS = 3
+
+function probeOnce(url, timeout, hop = 0) {
   return new Promise((resolve, reject) => {
-    const lib = url.protocol === 'https:' ? https : http
-    const req = lib.get(
-      url,
-      {
-        rejectUnauthorized: false,
-        agent: agentFor(url),
-        headers: {
-          'User-Agent': UA,
-          Accept: '*/*',
-          'Accept-Language': 'zh-CN,zh;q=0.9',
-          Referer: `${url.protocol}//${url.host}/`,
-          Connection: 'close'
+    // 探测同样要过出网校验（best.js 探测的地址来自上游源站返回）
+    assertPublicTarget(url.toString()).then(() => {
+      const lib = url.protocol === 'https:' ? https : http
+      const req = lib.get(
+        url,
+        {
+          rejectUnauthorized: !ALLOW_INSECURE_TLS,
+          agent: agentFor(url),
+          headers: {
+            'User-Agent': UA,
+            Accept: '*/*',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+            Referer: `${url.protocol}//${url.host}/`,
+            Connection: 'close'
+          },
+          timeout
         },
-        timeout
-      },
-      (res) => {
-        const code = res.statusCode || 0
-        if (code >= 300 && code < 400 && res.headers.location) {
-          res.resume()
-          probeOnce(new URL(res.headers.location, url), timeout).then(resolve, reject)
-          return
+        (res) => {
+          const code = res.statusCode || 0
+          if (code >= 300 && code < 400 && res.headers.location) {
+            res.resume()
+            if (hop >= MAX_PROBE_REDIRECTS) {
+              reject(new Error('重定向次数过多'))
+              return
+            }
+            probeOnce(new URL(res.headers.location, url), timeout, hop + 1).then(resolve, reject)
+            return
+          }
+          const contentType = res.headers['content-type'] || ''
+          res.destroy()
+          if (code >= 200 && code < 300) resolve({ code, contentType })
+          else reject(new Error(`HTTP ${code}`))
         }
-        const contentType = res.headers['content-type'] || ''
-        res.destroy()
-        if (code >= 200 && code < 300) resolve({ code, contentType })
-        else reject(new Error(`HTTP ${code}`))
-      }
-    )
-    req.on('timeout', () => req.destroy(new Error('探测超时')))
-    req.on('error', reject)
+      )
+      req.on('timeout', () => req.destroy(new Error('探测超时')))
+      req.on('error', reject)
+    }, reject)
   })
 }
 
@@ -150,7 +163,7 @@ export async function probeMediaUrl(rawUrl, { timeout = 6000 } = {}) {
 }
 
 // 流式代理：m3u8 重写，其余（ts/key/mp4）原样透传
-export function handleHlsProxy(req, res) {
+export async function handleHlsProxy(req, res) {
   const raw = String(req.query.url || '')
   if (!isHttpUrl(raw)) return res.status(400).json({ error: 'url 参数非法' })
 
@@ -160,7 +173,14 @@ export function handleHlsProxy(req, res) {
   } catch {
     return res.status(400).json({ error: 'url 参数非法' })
   }
-  fetchUpstream(req, res, url, { retried: false })
+  try {
+    // 出口校验：协议合法只是最基本的一条，内网/云元数据地址必须在这里拦掉
+    await assertPublicTarget(url.toString())
+  } catch (err) {
+    return res.status(err.status || 403).json({ error: err.message || '目标地址不被允许' })
+  }
+  // 令牌链：<video> 发不出自定义头，所以把调用方的 token 透传给重写后的分片/密钥地址
+  fetchUpstream(req, res, url, { retried: false, token: String(req.query.token || '') })
 }
 
 // 取上游：默认走代理（如果配了），失败（网络错误 / 4xx / 5xx）就换另一条路由重试一次。
@@ -198,7 +218,7 @@ function fetchUpstream(req, res, url, state) {
 
   const upstream = lib.get(
     url,
-    { rejectUnauthorized: false, agent, headers, timeout: 20000 },
+    { rejectUnauthorized: !ALLOW_INSECURE_TLS, agent, headers, timeout: 20000 },
     (remote) => {
       const code = remote.statusCode || 0
       if (code >= 400 || code < 200) {
@@ -221,7 +241,8 @@ function fetchUpstream(req, res, url, state) {
         remote.on('data', (chunk) => {
           total += chunk.length
           if (total > 4 * 1024 * 1024) {
-            remote.destroy()
+            // 必须带错误 destroy，否则既不会有 end 也不会有 error，响应会一直挂着不结束
+            remote.destroy(new Error('清单超过 4MB 限制'))
             return
           }
           chunks.push(chunk)
@@ -231,7 +252,7 @@ function fetchUpstream(req, res, url, state) {
           res.set('Content-Type', 'application/vnd.apple.mpegurl')
           res.set('Cache-Control', 'no-store')
           res.set('Access-Control-Allow-Origin', '*')
-          res.send(rewritePlaylist(text, url))
+          res.send(rewritePlaylist(text, url, state.token))
         })
         remote.on('error', () => {
           if (!res.headersSent) res.status(502).json({ error: '上游读取失败' })
@@ -241,7 +262,7 @@ function fetchUpstream(req, res, url, state) {
       }
 
       res.status(code || 200)
-      if (contentType) res.set('Content-Type', contentType)
+      if (contentType) res.set('Content-Type', sanitizeMediaContentType(contentType))
       const len = remote.headers['content-length']
       if (len) res.set('Content-Length', len)
       if (remote.headers['content-range']) res.set('Content-Range', remote.headers['content-range'])
