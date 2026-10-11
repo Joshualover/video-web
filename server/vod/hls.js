@@ -189,6 +189,9 @@ export async function handleHlsProxy(req, res) {
 
 // 取上游：默认走代理（如果配了），失败（网络错误 / 4xx / 5xx）就换另一条路由重试一次。
 // 有的 CDN 必须直连（代理 IP 会被拒），有的偏偏只能走代理，所以成功的那条路会被记住。
+// 3xx（CDN 很常见）必须跟随：否则清单会拿到一个空体、分片会拿到一个没有 Location 的 302。
+const MAX_FOLLOW_REDIRECTS = 3
+
 function fetchUpstream(req, res, url, state) {
   const lib = url.protocol === 'https:' ? https : http
   const headers = {
@@ -225,6 +228,33 @@ function fetchUpstream(req, res, url, state) {
     { rejectUnauthorized: !ALLOW_INSECURE_TLS, agent, headers, timeout: 20000 },
     (remote) => {
       const code = remote.statusCode || 0
+      if (code >= 300 && code < 400 && remote.headers.location) {
+        // 3xx：跟随 Location，每跳都重新过出口校验（重定向是绕过校验的经典手法）
+        settled = true // 本次调用交出控制权，不再走 retry 路径
+        remote.resume()
+        if ((state.hops || 0) >= MAX_FOLLOW_REDIRECTS) {
+          res.status(502).json({ error: '上游重定向次数过多' })
+          return
+        }
+        let next
+        try {
+          next = new URL(remote.headers.location, url)
+        } catch {
+          res.status(502).json({ error: '上游返回无效跳转' })
+          return
+        }
+        assertPublicTarget(next.toString()).then(
+          () => fetchUpstream(req, res, next, { ...state, hops: (state.hops || 0) + 1 }),
+          (err) => {
+            if (res.headersSent) {
+              res.end()
+              return
+            }
+            res.status(err?.status || 403).json({ error: err?.message || '重定向目标不被允许' })
+          }
+        )
+        return
+      }
       if (code >= 400 || code < 200) {
         remote.resume()
         retryOtherRoute(`上游返回 ${code}`)

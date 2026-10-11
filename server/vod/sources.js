@@ -173,14 +173,15 @@ async function buildSources({ force = false, onlyConfigId = null } = {}) {
     (c) => c.enabled !== false && (!onlyConfigId || c.id === onlyConfigId)
   )
 
-  const fromConfigs = []
-  await Promise.all(
+  // 按 targets 顺序归集（Promise.all 保序）。原先用并发 push，最终顺序与源的归属
+  // 取决于各配置抓取的完成先后 —— 同一 api 出现在多个配置时，结果不稳定。
+  const perConfig = await Promise.all(
     targets.map(async (config) => {
       const cached = configStatus.get(config.id)
       const fresh = cached && Date.now() - cached.at < SOURCES_TTL
-      if (fresh && (!force || (onlyConfigId && config.id !== onlyConfigId))) {
-        fromConfigs.push(...cached.sources)
-        return
+      // 失败结果不能当可用缓存：否则某配置瞬时超时一次，它的源会消失 6 小时
+      if (fresh && !cached.error && (!force || (onlyConfigId && config.id !== onlyConfigId))) {
+        return cached.sources
       }
       try {
         const sources = await fetchConfigSources(config)
@@ -190,7 +191,7 @@ async function buildSources({ force = false, onlyConfigId = null } = {}) {
           error: '',
           count: sources.length
         })
-        fromConfigs.push(...sources)
+        return sources
       } catch (err) {
         configStatus.set(config.id, {
           at: Date.now(),
@@ -198,11 +199,12 @@ async function buildSources({ force = false, onlyConfigId = null } = {}) {
           error: err?.message || '拉取失败',
           count: 0
         })
+        return []
       }
     })
   )
 
-  const collected = [...fromConfigs]
+  const collected = perConfig.flat()
   for (const item of await loadFallback()) {
     const api = normalizeApi(item.api)
     if (api) collected.push({ name: cleanName(item.name, api), api, from: '内置', group: '内置', configId: '' })
@@ -258,7 +260,9 @@ export async function getSources({ refresh = false, configId = null } = {}) {
   if (!loadPromise) {
     loadPromise = buildSources({ force: refresh, onlyConfigId: configId })
       .then((sources) => {
-        sourcesCache = { at: Date.now(), sources }
+        // 只有「全量」结果才能进全局缓存：configId 场景的结果只包含那一个配置的源，
+        // 写进去会让其它配置的源在 TTL 内从所有页面消失。
+        if (!configId) sourcesCache = { at: Date.now(), sources }
         return sources
       })
       .finally(() => {

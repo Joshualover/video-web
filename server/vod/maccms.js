@@ -141,7 +141,9 @@ export function parsePlayUrl(play) {
     .split('$$$')
     .map((line) =>
       line
-        .split('#')
+        // '#' 是剧集分隔符，但地址自身也可能带 '#'（如 #t=10）。
+        // 只在「后面看起来是新一集（名称$http…）」的 '#' 处切分，避免把地址截断。
+        .split(/#(?=[^#$]*\$https?:\/\/)/i)
         .map((item) => item.trim())
         .filter(Boolean)
         .map((item) => {
@@ -202,6 +204,7 @@ export async function fetchDetail(api, id, opts = {}) {
   // 苹果 CMS V10 的标准详情参数是 ac=detail；一部分源（尤其是多仓订阅下发的接口）只认这个，
   // 而另一部分老源只认 ac=videolist&ids。两种都试，优先取能给出剧集地址的那个。
   let fallback = null
+  let lastError = null
   for (const ac of ['detail', 'videolist']) {
     try {
       const text = await httpGetText(buildUrl(api, { ac, ids: id }), opts)
@@ -211,9 +214,12 @@ export async function fetchDetail(api, id, opts = {}) {
       if (!video) continue
       if (video.playUrl.length) return video
       if (!fallback) fallback = video
-    } catch {
-      // 换下一种详情参数
+    } catch (err) {
+      // 换下一种详情参数；两种都失败时把真实原因抛出去，
+      // 否则上层会把它当成「未找到该影片」（404），健康状态与日志也一起失真
+      lastError = err
     }
   }
+  if (!fallback && lastError) throw lastError
   return fallback
 }

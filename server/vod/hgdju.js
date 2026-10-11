@@ -90,6 +90,8 @@ async function fetchText(url, { timeout = 15000 } = {}) {
       )
     } catch (err) {
       lastError = err
+      // 出口校验拒绝（400/403）不是「站点抽风」，重试没有意义
+      if (err?.status === 400 || err?.status === 403) throw err
       if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 800))
     }
   }

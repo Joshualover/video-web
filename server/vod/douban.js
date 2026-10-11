@@ -2,7 +2,7 @@
 //  - 不依赖任何采集源/配置地址，直接取豆瓣 m 站 rexxar 接口的「近期热门」
 //  - 综艺在豆瓣挂在 tv 下（category=show），所以 kind 与豆瓣 kind 不一定相同
 //  - 结果做进程内缓存（默认 1 小时），避免频繁打扰豆瓣
-import { httpGetText } from './maccms.js'
+import { httpGetText, parseJsonLoose } from './maccms.js'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
@@ -71,12 +71,15 @@ function pickValue(list, value, fallbackValue) {
 
 function normalizeItem(item) {
   const subtitle = String(item?.card_subtitle || '').trim()
+  const rawScore = Number(item?.rating?.value)
   return {
     id: String(item?.id || ''),
     name: String(item?.title || '').trim(),
     poster: String(item?.pic?.large || item?.pic?.normal || ''),
-    score: item?.rating?.value ? Number(item.rating.value).toFixed(1) : '',
-    year: subtitle.match(/(\d{4})/)?.[1] || '',
+    // Number('abc').toFixed(1) 会得到字符串 "NaN"，前端会把它当评分直接显示
+    score: Number.isFinite(rawScore) && rawScore > 0 ? rawScore.toFixed(1) : '',
+    // 年份优先取 subtitle 开头那四位（"2024 / 中国大陆 / 剧情"），否则退回全文第一个四位串
+    year: (subtitle.match(/^\s*(\d{4})/) || subtitle.match(/(\d{4})/) || [])[1] || '',
     subtitle: subtitle.replace(/^\d{4}\s*\/\s*/, '').slice(0, 40)
   }
 }
@@ -107,7 +110,13 @@ export async function fetchDoubanHot({ kind = 'movie', category = '', type = '',
       Accept: 'application/json, text/plain, */*'
     }
   })
-  const data = JSON.parse(text)
+  let data
+  try {
+    data = parseJsonLoose(text)
+  } catch {
+    // 被风控/被墙时豆瓣会返回 HTML，直接 JSON.parse 会抛出 `Unexpected token '<'` 这类难定位的信息
+    throw new Error('豆瓣返回内容无法解析（可能被风控或需要给服务端配代理）')
+  }
   const total = Number(data?.total) || 0
   const list = (Array.isArray(data?.items) ? data.items : [])
     .map(normalizeItem)
