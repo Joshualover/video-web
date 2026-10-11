@@ -164,7 +164,36 @@ app.use((req, res, next) => {
   return res.status(429).json({ error: `请求过于频繁，请 ${retryAfter} 秒后再试` })
 })
 
+// ---- 可选：整站 Basic 鉴权（默认关闭）----
+// 前端「登录」只是本地 UI 门槛（口令存在浏览器里，服务端不校验它）。
+// 要真正挡住未授权访问，可以交给反向代理，或者设 BASIC_AUTH="user:pass" 让本服务自己把关。
+const BASIC_AUTH = (process.env.BASIC_AUTH || '').trim()
+if (BASIC_AUTH) {
+  const expectedBuf = Buffer.from(`Basic ${Buffer.from(BASIC_AUTH).toString('base64')}`)
+  app.use((req, res, next) => {
+    // 探活放行，便于反向代理 / 监控检查
+    if (req.path === '/api/health') return next()
+    const header = String(req.headers.authorization || '')
+    const buf = Buffer.from(header)
+    // 恒定时间比较，避免用长度/前缀去试探口令
+    const okBasic = buf.length === expectedBuf.length && crypto.timingSafeEqual(buf, expectedBuf)
+    // 与 PROXY_TOKEN 兼容：带有效 Bearer 的请求（前端 fetch / API 客户端）同样放行
+    const okBearer = Boolean(PROXY_TOKEN) && tokenAllowed(null, header)
+    if (okBasic || okBearer) {
+      // 整站 Basic 已认证的请求不再要求令牌：浏览器的 Basic 凭据对同源请求自动生效，
+      // 若同时设了 PROXY_TOKEN，再加一道令牌会让「页面能开、接口全 401」
+      req.flowAuthed = true
+      return next()
+    }
+    res.set('WWW-Authenticate', 'Basic realm="flow-player", charset="UTF-8"')
+    return res.status(401).send('需要登录')
+  })
+  console.log('[flow-player] 已开启整站 Basic 鉴权（BASIC_AUTH）')
+}
+
 function assertProxyToken(req, res, next) {
+  // 已通过整站 Basic 鉴权的请求直接放行（见上面的 BASIC_AUTH 中间件）
+  if (req.flowAuthed) return next()
   if (!tokenAllowed(req.query.token, req.headers.authorization || '')) {
     return res.status(401).json({ error: '缺少有效的访问令牌' })
   }

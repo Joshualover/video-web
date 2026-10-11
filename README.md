@@ -135,6 +135,18 @@ HOST=127.0.0.1 npm start
 
 未设置 `PROXY_TOKEN` 且监听非回环地址时，启动日志会打印安全提示。
 
+### 整站鉴权（BASIC_AUTH，可选）
+
+前端的「登录」只是本地 UI 门槛（口令与登录态都存在浏览器 localStorage 里，**服务端不校验它**）。要真正挡住未授权访问，两种做法：
+
+```bash
+# 1) 交给反向代理（Nginx / Caddy / 1Panel 的 Basic Auth、OAuth 等）——推荐
+# 2) 让本服务自己把关：整站（页面 + /api）都要 Basic 认证
+BASIC_AUTH="user:pass" npm start
+```
+
+`/api/health` 例外（便于探活）；已配置 `PROXY_TOKEN` 时，带有效 Bearer 令牌的请求同样放行。
+
 ### 限流与抓取任务护栏
 
 - **按 IP 限流**：普通接口默认 600 次/分钟；「放大型」接口（全源搜索、选路、全量刷新、源检测、站内抓取）
