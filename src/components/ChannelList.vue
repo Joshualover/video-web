@@ -92,9 +92,11 @@ function onResize() {
 }
 
 // ---- 通用 ----
+// 坏图标记按 URL 记：channel.id 是按序号生成的（ch-N），换一个播放列表后序号会重合，
+// 列表 A 的坏图会让列表 B 里同序号的频道永远不加载 logo。
 function logoFailed(channel) {
-  brokenLogos.add(channel.id)
-  channel.logo = ''
+  brokenLogos.add(channel.url || channel.id)
+  // 不再就地改写 channel.logo —— 那是 store 里的频道数据，改了会连带影响导出/收藏
 }
 
 function channelStatusClass(channel) {
@@ -201,7 +203,7 @@ onBeforeUnmount(() => {
       >
         <span class="channel-thumb">
           <img
-            v-if="channel.logo && !brokenLogos.has(channel.id)"
+            v-if="channel.logo && !brokenLogos.has(channel.url || channel.id)"
             :src="channel.logo"
             alt=""
             loading="lazy"
@@ -248,7 +250,7 @@ onBeforeUnmount(() => {
         >
           <span class="channel-logo">
             <img
-              v-if="channel.logo && !brokenLogos.has(channel.id)"
+              v-if="channel.logo && !brokenLogos.has(channel.url || channel.id)"
               :src="channel.logo"
               alt=""
               loading="lazy"

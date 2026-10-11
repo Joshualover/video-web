@@ -566,7 +566,7 @@ onBeforeUnmount(() => {
             <div class="vod-poster">
               <img
                 v-if="v.pic && !failed.has(videoKey(v))"
-                :src="v.pic"
+                :src="vodImage(v.pic)"
                 alt=""
                 loading="lazy"
                 referrerpolicy="no-referrer"

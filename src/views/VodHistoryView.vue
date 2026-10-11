@@ -23,9 +23,7 @@ function resume(item) {
 }
 
 function remove(item) {
-  if (mode.value === 'aggregated' && (item.variants || 1) > 1) {
-    vodStore.removeRecentByTitle(item.name, item.year)
-  } else if (mode.value === 'aggregated') {
+  if (mode.value === 'aggregated') {
     vodStore.removeRecentByTitle(item.name, item.year)
   } else {
     vodStore.removeRecent(item.site, item.id)

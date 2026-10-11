@@ -25,7 +25,10 @@ function submit() {
   const ok = authStore.login(username.value.trim(), password.value)
   loading.value = false
   if (ok) {
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
+    const raw = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
+    // 只接受站内路径：跨源地址会被 history.pushState 以 SecurityError 拒绝，
+    // 抛出未捕获异常并把已登录的用户留在登录页
+    const redirect = raw.startsWith('/') && !raw.startsWith('//') ? raw : '/'
     router.replace(redirect)
   } else {
     error.value = '账号或密码错误'
