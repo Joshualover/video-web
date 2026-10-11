@@ -2246,6 +2246,13 @@ input::placeholder {
 }
 
 /* ---- 方块视图（网格卡片） ---- */
+/* 虚拟滚动宿主：高度按总行数撑开，真正的网格在内层（只渲染可视行） */
+.channel-grid-host {
+  position: relative;
+  display: block;
+  min-height: 0;
+}
+
 .channel-grid {
   --card-min: 150px;
   display: grid;

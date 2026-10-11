@@ -60,6 +60,60 @@ const visibleChannels = computed(() =>
 
 const totalHeight = computed(() => filtered.value.length * ROW_HEIGHT)
 
+// ---- 方块视图（虚拟滚动）----
+// 网格的列数、行高、间距都由 CSS（含卡片尺寸档位）决定，所以先从真实 DOM 量出来，
+// 再按「可视行 + overscan」只渲染窗口内的卡片。否则 1~3 万条的列表切成方块视图会
+// 一次性创建上万个卡片节点（每个还带 img/按钮），把主线程卡死。
+const gridCols = ref(1)
+const gridCardH = ref(120)
+const gridGap = ref(12)
+const gridPadTop = ref(14)
+const gridPadBottom = ref(14)
+
+const gridRowCount = computed(() => Math.ceil(filtered.value.length / Math.max(gridCols.value, 1)))
+const gridStep = computed(() => gridCardH.value + gridGap.value)
+const gridTotalHeight = computed(() => {
+  const rows = gridRowCount.value
+  if (!rows) return 0
+  return gridPadTop.value + rows * gridCardH.value + (rows - 1) * gridGap.value + gridPadBottom.value
+})
+
+const gridStartRow = computed(() => {
+  const step = gridStep.value || 1
+  return Math.max(0, Math.floor((scrollTop.value - OVERSCAN * gridCardH.value) / step))
+})
+
+const gridEndRow = computed(() => {
+  const step = gridStep.value || 1
+  const end = Math.ceil((scrollTop.value + viewportHeight.value + OVERSCAN * gridCardH.value) / step)
+  return Math.min(gridRowCount.value, end)
+})
+
+const visibleGridChannels = computed(() =>
+  filtered.value.slice(gridStartRow.value * gridCols.value, gridEndRow.value * gridCols.value)
+)
+
+// 网格自身的 padding 已由 CSS 负责，所以位移只算行偏移（否则顶部会出现双倍留白）
+const gridOffset = computed(() => gridStartRow.value * gridStep.value)
+
+function measureGrid() {
+  if (!isGrid.value || !containerRef.value) return
+  const gridEl = containerRef.value.querySelector('.channel-grid')
+  if (!gridEl) return
+  const style = getComputedStyle(gridEl)
+  const cols = style.gridTemplateColumns.split(' ').filter((track) => track && track !== 'none').length
+  if (cols > 0) gridCols.value = cols
+  const gap = Number.parseFloat(style.rowGap)
+  if (Number.isFinite(gap)) gridGap.value = gap
+  const padTop = Number.parseFloat(style.paddingTop)
+  if (Number.isFinite(padTop)) gridPadTop.value = padTop
+  const padBottom = Number.parseFloat(style.paddingBottom)
+  if (Number.isFinite(padBottom)) gridPadBottom.value = padBottom
+  const card = gridEl.querySelector('.channel-card')
+  const cardH = card?.offsetHeight || 0
+  if (cardH > 0) gridCardH.value = cardH
+}
+
 function onScroll() {
   scrollTop.value = containerRef.value?.scrollTop || 0
   showTop.value = scrollTop.value > 600
@@ -88,7 +142,10 @@ function syncThumbSize() {
 
 function onResize() {
   updateViewport()
-  nextTick(syncThumbSize)
+  nextTick(() => {
+    syncThumbSize()
+    measureGrid()
+  })
 }
 
 // ---- 通用 ----
@@ -132,10 +189,12 @@ function scrollActiveIntoView() {
   )
   if (index < 0 || !containerRef.value) return
   if (isGrid.value) {
-    const el = containerRef.value.querySelector(
-      `.channel-card[data-id="${playlistStore.activeChannelId}"]`
-    )
-    el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    // 按行号算：卡片是虚拟渲染的，不可视时 DOM 里根本没有它，querySelector 会找不到
+    const row = Math.floor(index / Math.max(gridCols.value, 1))
+    const top = row * gridStep.value
+    if (top < scrollTop.value || top > scrollTop.value + viewportHeight.value - gridCardH.value) {
+      containerRef.value.scrollTop = Math.max(0, top - viewportHeight.value / 2)
+    }
     return
   }
   const top = index * ROW_HEIGHT
@@ -160,15 +219,27 @@ watch(
   }
 )
 
-// 视图/卡片大小变化时重新同步缩略图高度
+// 视图/卡片大小变化时重新同步缩略图高度，并重新量网格（列数会变）
 watch([() => isGrid.value, () => uiStore.channelCardSize], () => {
-  nextTick(syncThumbSize)
+  nextTick(() => {
+    syncThumbSize()
+    measureGrid()
+  })
 })
+
+// 列表内容变化后卡片尺寸/列数可能变（滚动条出现、过滤变短等），重量一次
+watch(
+  () => [filtered.value.length, playlistStore.search, playlistStore.activeGroup],
+  () => nextTick(measureGrid)
+)
 
 onMounted(() => {
   updateViewport()
   window.addEventListener('resize', onResize)
-  nextTick(syncThumbSize)
+  nextTick(() => {
+    syncThumbSize()
+    measureGrid()
+  })
 })
 
 onBeforeUnmount(() => {
@@ -185,11 +256,16 @@ onBeforeUnmount(() => {
   >
     <div
       v-if="isGrid"
-      class="channel-list channel-grid"
-      :class="'card-' + uiStore.channelCardSize"
+      class="channel-list channel-grid-host"
+      :style="{ height: filtered.length ? gridTotalHeight + 'px' : undefined }"
     >
+      <div
+        class="channel-grid"
+        :class="'card-' + uiStore.channelCardSize"
+        :style="{ transform: `translateY(${gridOffset}px)` }"
+      >
       <button
-        v-for="channel in filtered"
+        v-for="channel in visibleGridChannels"
         :key="channel.id"
         class="channel-card"
         :data-id="channel.id"
@@ -223,6 +299,7 @@ onBeforeUnmount(() => {
           <Heart :size="13" :fill="isFavorite(channel) ? 'currentColor' : 'none'" />
         </button>
       </button>
+      </div>
 
       <div v-if="!filtered.length" class="channel-empty">
         <Play :size="22" />
