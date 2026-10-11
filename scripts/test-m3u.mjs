@@ -77,4 +77,41 @@ assert.equal(groupTitlePriority.channels[0].group, '新闻')
 const bare = parseM3u(['#EXTM3U', 'https://bare.example/one.m3u8'].join('\n'))
 assert.equal(bare.channels[0].group, '未分类')
 
+// 回归 5：标题自带逗号时不能被截断（#EXTINF 的分隔符是「第一个引号外的逗号」）
+const commaTitle = parseM3u(
+  [
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-id="a",CCTV5, 高清',
+    'http://c1.m3u8',
+    '#EXTINF:-1 group-title="A,B",频道名, 副标题',
+    'http://c2.m3u8'
+  ].join('\n')
+)
+assert.equal(commaTitle.channels[0].name, 'CCTV5, 高清')
+assert.equal(commaTitle.channels[0].attrs['tvg-id'], 'a')
+assert.equal(commaTitle.channels[1].name, '频道名, 副标题')
+assert.equal(commaTitle.channels[1].group, 'A,B')
+
+// 回归 6：BOM + CRLF + 非 http 协议行（rtsp/udp 会被跳过，不应计为频道）
+const bomCrlf = parseM3u(
+  '\uFEFF#EXTM3U\r\n#EXTGRP:组A\r\n#EXTINF:-1,甲\r\nrtsp://a/1\r\n#EXTINF:-1,乙\r\nhttp://b/2.mp4\r\n'
+)
+assert.equal(bomCrlf.count, 1)
+assert.equal(bomCrlf.channels[0].name, '乙')
+assert.equal(bomCrlf.channels[0].group, '组A')
+assert.equal(bomCrlf.sawHeader, true)
+
+// 回归 7：#EXTINF 缺 duration、只有属性时不应崩，duration 回落 -1
+const noDuration = parseM3u(
+  ['#EXTM3U', '#EXTINF:tvg-name="NN",只有属性', 'http://d/1.m3u8'].join('\n')
+)
+assert.equal(noDuration.channels[0].name, '只有属性')
+assert.equal(noDuration.channels[0].duration, -1)
+
+// 回归 8：重复条目各自保留（去重是上层职责，解析器不吞行）
+const dup = parseM3u(
+  ['#EXTM3U', '#EXTINF:-1,同一条', 'http://e/1.m3u8', '#EXTINF:-1,同一条', 'http://e/1.m3u8'].join('\n')
+)
+assert.equal(dup.count, 2)
+
 console.log('m3u parser tests passed')

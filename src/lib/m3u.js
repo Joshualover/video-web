@@ -25,20 +25,21 @@ export function urlBasename(url) {
 }
 
 function splitExtinfRest(rest) {
+  // #EXTINF 的规范分隔符是「第一个引号外的逗号」：
+  //   #EXTINF:-1 tvg-id="a",CCTV5, 高清  → 属性部分 `-1 tvg-id="a"`，标题 `CCTV5, 高清`
+  // 取最后一个会把标题里自带的逗号当成分隔符，导致频道名被截断。
   let inQuotes = false
-  let lastComma = -1
   for (let i = 0; i < rest.length; i += 1) {
     const ch = rest[i]
     if (ch === '"') inQuotes = !inQuotes
-    else if (ch === ',' && !inQuotes) lastComma = i
+    else if (ch === ',' && !inQuotes) {
+      return {
+        attrs: rest.slice(0, i).trim(),
+        name: rest.slice(i + 1).trim()
+      }
+    }
   }
-  if (lastComma === -1) {
-    return { attrs: rest.trim(), name: '' }
-  }
-  return {
-    attrs: rest.slice(0, lastComma).trim(),
-    name: rest.slice(lastComma + 1).trim()
-  }
+  return { attrs: rest.trim(), name: '' }
 }
 
 function parseAttributes(str) {
