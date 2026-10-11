@@ -120,7 +120,14 @@ app.use((req, res, next) => {
 // 0 = 关闭；部署在反向代理后面、需要真实客户端 IP 时设 TRUST_PROXY=1（否则按 socket 地址计）。
 const RATE_LIMIT_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_PER_MIN ?? 600) || 0, 0)
 const RATE_LIMIT_HEAVY_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_HEAVY_PER_MIN ?? 30) || 0, 0)
+// 登录单独一档：防止拿口令爆破（WEB_LOGIN 场景）
+const RATE_LIMIT_LOGIN_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_LOGIN_PER_MIN ?? 10) || 0, 0)
 const HEAVY_ROUTE_RE = /^\/api\/(vod\/search|vod\/best|site-search|site-crawl)/
+const RATE_LIMITS = {
+  l: RATE_LIMIT_LOGIN_PER_MIN,
+  h: RATE_LIMIT_HEAVY_PER_MIN,
+  n: RATE_LIMIT_PER_MIN
+}
 
 if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1)
 
@@ -154,11 +161,11 @@ function hitRateLimit(key, limit) {
 
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api') || req.path === '/api/health') return next()
-  const heavy = isHeavyRoute(req)
-  const limit = heavy ? RATE_LIMIT_HEAVY_PER_MIN : RATE_LIMIT_PER_MIN
+  const cls = req.path === '/api/login' ? 'l' : isHeavyRoute(req) ? 'h' : 'n'
+  const limit = RATE_LIMITS[cls]
   if (!limit) return next()
   const ip = req.ip || req.socket?.remoteAddress || 'unknown'
-  const retryAfter = hitRateLimit(`${heavy ? 'h' : 'n'}:${ip}`, limit)
+  const retryAfter = hitRateLimit(`${cls}:${ip}`, limit)
   if (!retryAfter) return next()
   res.set('Retry-After', String(retryAfter))
   return res.status(429).json({ error: `请求过于频繁，请 ${retryAfter} 秒后再试` })
@@ -189,6 +196,85 @@ if (BASIC_AUTH) {
     return res.status(401).send('需要登录')
   })
   console.log('[flow-player] 已开启整站 Basic 鉴权（BASIC_AUTH）')
+}
+
+// ---- 可选：服务端会话登录（WEB_LOGIN="user:pass"）----
+// 前端默认的「登录」只是本地 UI 门槛（口令存在浏览器里）。设置 WEB_LOGIN 后改为服务端会话：
+// 登录成功下发 HttpOnly + SameSite=Lax 的签名 Cookie，/api 请求（含 <video>/<img> 这类发不出
+// 自定义头的）都会自动携带，比 PROXY_TOKEN 更适合浏览器场景。默认不设置 = 行为完全不变。
+const WEB_LOGIN = (process.env.WEB_LOGIN || '').trim()
+const SESSION_COOKIE = 'flow_session'
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
+// 用口令做 HMAC 密钥：签名不可伪造、口令一改旧会话全部失效，且 HMAC 不会泄漏口令本身
+const SESSION_KEY = process.env.SESSION_SECRET || WEB_LOGIN || 'flow-player'
+const SESSION_EXEMPT = ['/api/login', '/api/logout', '/api/session', '/api/health']
+
+function constantTimeEqual(a, b) {
+  const bufA = Buffer.from(String(a ?? ''))
+  const bufB = Buffer.from(String(b ?? ''))
+  return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB)
+}
+
+function signSession(exp) {
+  return crypto.createHmac('sha256', SESSION_KEY).update(String(exp)).digest('hex')
+}
+
+function readCookie(header, name) {
+  for (const part of String(header || '').split(';')) {
+    const idx = part.indexOf('=')
+    if (idx < 0) continue
+    if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim())
+  }
+  return ''
+}
+
+function validSession(req) {
+  const [exp, sig] = readCookie(req.headers.cookie, SESSION_COOKIE).split('.')
+  if (!exp || !sig || Number(exp) < Date.now()) return false
+  return constantTimeEqual(sig, signSession(exp))
+}
+
+function sessionCookie(exp) {
+  const secure = process.env.COOKIE_SECURE === '1' ? '; Secure' : ''
+  const maxAge = Math.max(Math.floor((exp - Date.now()) / 1000), 0)
+  return `${SESSION_COOKIE}=${exp}.${signSession(exp)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`
+}
+
+app.get('/api/session', (req, res) => {
+  res.json({
+    enabled: Boolean(WEB_LOGIN),
+    authenticated: WEB_LOGIN ? validSession(req) || Boolean(req.flowAuthed) : true
+  })
+})
+
+app.post('/api/login', (req, res) => {
+  if (!WEB_LOGIN) return res.json({ enabled: false, ok: false })
+  const user = String(req.body?.username || '').trim()
+  const pass = String(req.body?.password || '')
+  if (!constantTimeEqual(`${user}:${pass}`, WEB_LOGIN)) {
+    return res.status(401).json({ error: '账号或密码错误' })
+  }
+  res.set('Set-Cookie', sessionCookie(Date.now() + SESSION_TTL_MS))
+  res.json({ enabled: true, ok: true })
+})
+
+app.post('/api/logout', (_req, res) => {
+  res.set('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`)
+  res.json({ ok: true })
+})
+
+if (WEB_LOGIN) {
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api')) return next()
+    if (SESSION_EXEMPT.includes(req.path)) return next()
+    if (req.flowAuthed || validSession(req)) {
+      // 会话已认证同样标记为已授权：否则同时设了 PROXY_TOKEN 时会出现「能登录、接口全 401」
+      req.flowAuthed = true
+      return next()
+    }
+    return res.status(401).json({ error: '未登录或登录已过期' })
+  })
+  console.log('[flow-player] 已开启服务端会话登录（WEB_LOGIN）')
 }
 
 function assertProxyToken(req, res, next) {

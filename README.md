@@ -147,10 +147,26 @@ BASIC_AUTH="user:pass" npm start
 
 `/api/health` 例外（便于探活）；已配置 `PROXY_TOKEN` 时，带有效 Bearer 令牌的请求同样放行。
 
+### 服务端会话登录（WEB_LOGIN，可选）
+
+前端的「登录」默认只是本地 UI 门槛。设置 `WEB_LOGIN="user:pass"` 后改为**服务端会话**：
+登录成功下发 `HttpOnly` + `SameSite=Lax` 的签名 Cookie，`/api` 全部需要它
+（`/api/health` 与登录、登出、会话探测例外）。Cookie 对同源请求自动生效，
+所以 `<video>` / `<img>` 这类发不出自定义头的请求也能正常工作——这是它比 `PROXY_TOKEN` 更适合浏览器场景的地方。
+
+```bash
+WEB_LOGIN="admin:换成你的口令" npm start
+COOKIE_SECURE=1        # 走 HTTPS 时加上，让 Cookie 只经 https 传输
+SESSION_SECRET=随机长串 # 可选：不设则用口令派生（改口令即让所有会话失效）
+```
+
+与 `PROXY_TOKEN` / `BASIC_AUTH` 可共存：任一方式认证通过，都不会再被令牌挡。
+
 ### 限流与抓取任务护栏
 
 - **按 IP 限流**：普通接口默认 600 次/分钟；「放大型」接口（全源搜索、选路、全量刷新、源检测、站内抓取）
-  默认 30 次/分钟，超限返回 `429` 与 `Retry-After`。可用 `RATE_LIMIT_PER_MIN` / `RATE_LIMIT_HEAVY_PER_MIN`
+  默认 30 次/分钟；登录接口默认 10 次/分钟（防爆破）。超限返回 `429` 与 `Retry-After`。
+  可用 `RATE_LIMIT_PER_MIN` / `RATE_LIMIT_HEAVY_PER_MIN` / `RATE_LIMIT_LOGIN_PER_MIN`
   调整，设 `0` 关闭。部署在反向代理后面、需要真实客户端 IP 时设 `TRUST_PROXY=1`
   （仅在反代会覆盖 `X-Forwarded-For` 时才安全）。
 - **站内搜片是单任务**：同一时刻只允许一个搜索/抓取任务，重复提交返回 `409`。单任务默认 20 分钟上限

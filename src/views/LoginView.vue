@@ -13,7 +13,7 @@ const password = ref('')
 const error = ref('')
 const loading = ref(false)
 
-function submit() {
+async function submit() {
   if (loading.value) return
   error.value = ''
   if (!username.value.trim() || !password.value) {
@@ -21,17 +21,26 @@ function submit() {
     return
   }
   loading.value = true
-  // 本地校验，同步完成
-  const ok = authStore.login(username.value.trim(), password.value)
-  loading.value = false
-  if (ok) {
+  try {
+    // 部署时若启用了服务端会话（WEB_LOGIN），登录要过服务端；否则沿用本地校验
+    if (!authStore.serverAuth) await authStore.refreshSession()
+    if (authStore.serverAuth) {
+      const res = await authStore.loginViaServer(username.value.trim(), password.value)
+      if (!res.ok) {
+        error.value = res.error || '账号或密码错误'
+        return
+      }
+    } else if (!authStore.login(username.value.trim(), password.value)) {
+      error.value = '账号或密码错误'
+      return
+    }
     const raw = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
     // 只接受站内路径：跨源地址会被 history.pushState 以 SecurityError 拒绝，
     // 抛出未捕获异常并把已登录的用户留在登录页
     const redirect = raw.startsWith('/') && !raw.startsWith('//') ? raw : '/'
     router.replace(redirect)
-  } else {
-    error.value = '账号或密码错误'
+  } finally {
+    loading.value = false
   }
 }
 </script>
