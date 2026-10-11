@@ -1,10 +1,15 @@
 // 合并 data/ 下多个 m3u 文件：合并同组、删除重复链接
 // 用法: node scripts/merge-m3u.mjs data/123.m3u data/1234.m3u -o data/combined.m3u
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { parseM3u } from '../src/lib/m3u.js'
 
 const args = process.argv.slice(2)
 const oIdx = args.indexOf('-o')
+// -o 后面必须跟文件名：否则 outFile 是 undefined，writeFileSync 会抛 TypeError（且看不出原因）
+if (oIdx >= 0 && !args[oIdx + 1]) {
+  console.error('用法: node scripts/merge-m3u.mjs <file1.m3u> [file2.m3u ...] -o out.m3u')
+  process.exit(1)
+}
 const outFile = oIdx >= 0 ? args[oIdx + 1] : 'data/combined.m3u'
 const inputFiles = args.filter((_, i) => i !== oIdx && i !== oIdx + 1)
 
@@ -80,7 +85,13 @@ for (const group of ordered) {
   lines.push('')
 }
 
-writeFileSync(outFile, lines.join('\n').replace(/\n{3,}/g, '\n\n'), 'utf8')
+// 先写临时文件再改名：中途失败时不会把已经存在的目标列表写坏
+const tmpFile = `${outFile}.tmp`
+if (existsSync(outFile) && !inputFiles.includes(outFile)) {
+  console.log(`目标文件已存在，将覆盖：${outFile}`)
+}
+writeFileSync(tmpFile, lines.join('\n').replace(/\n{3,}/g, '\n\n'), 'utf8')
+renameSync(tmpFile, outFile)
 
 console.log(`合并完成: ${outFile}`)
 console.log(`  输入文件: ${inputFiles.join(', ')}`)

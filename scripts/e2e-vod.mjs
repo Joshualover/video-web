@@ -1,10 +1,13 @@
+import { existsSync } from 'node:fs'
 import { chromium } from 'playwright-core'
 
 const BASE = process.env.BASE || 'http://localhost:8790'
 const WD = process.env.WD || '庆余年'
-const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+// 默认指向 Windows Edge；换平台用 EDGE_PATH / CHROME_PATH 覆盖，否则交给 playwright 自己找
+const EDGE =
+  process.env.EDGE_PATH || process.env.CHROME_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 
-const browser = await chromium.launch({ executablePath: EDGE, headless: true })
+const browser = await chromium.launch(existsSync(EDGE) ? { executablePath: EDGE, headless: true } : { headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 await context.addInitScript(() => {
   localStorage.setItem('flow-player:auth-session', 'true')
