@@ -8,6 +8,21 @@ const EDGE =
 
 const browser = await chromium.launch(existsSync(EDGE) ? { executablePath: EDGE, headless: true } : { headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+// 部署启用服务端会话（WEB_LOGIN）时，只伪造 localStorage 不够：先用 LOGIN_USER/LOGIN_PASS 换会话 Cookie
+const LOGIN_USER = process.env.LOGIN_USER || ''
+const LOGIN_PASS = process.env.LOGIN_PASS || ''
+const session = await context.request.get(`${BASE}/api/session`).then((r) => r.json()).catch(() => ({}))
+if (session?.enabled) {
+  if (!LOGIN_USER) {
+    throw new Error('服务端启用了会话登录（WEB_LOGIN）：请用 LOGIN_USER / LOGIN_PASS 提供凭据')
+  }
+  const loginResp = await context.request.post(`${BASE}/api/login`, {
+    data: { username: LOGIN_USER, password: LOGIN_PASS }
+  })
+  if (!loginResp.ok()) throw new Error(`服务端登录失败：HTTP ${loginResp.status()}`)
+  console.log('[e2e] 已通过服务端会话登录')
+}
+
 await context.addInitScript(() => {
   localStorage.setItem('flow-player:auth-session', 'true')
   localStorage.setItem('flow-player:vodHomeTab', '"browse"')
