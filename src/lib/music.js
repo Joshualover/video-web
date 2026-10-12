@@ -32,7 +32,14 @@ export const musicApi = {
   checkSource: (id) => apiSend(`/api/music/sources/${encodeURIComponent(id)}/check`, {}),
   addSource: (body) => apiSend('/api/music/sources', body),
   removeSource: (id) => apiSend(`/api/music/sources/${encodeURIComponent(id)}`, null, 'DELETE'),
-  search: (wd, opts = {}) => apiGet('/api/music/search', { wd, source: opts.source, limit: opts.limit || 40 }),
+  // slow: 'exclude' = 只要快源（第一趟）；'only' = 只要慢源（第二趟，如 yt-dlp）
+  search: (wd, opts = {}) =>
+    apiGet('/api/music/search', {
+      wd,
+      source: opts.source,
+      limit: opts.limit || 40,
+      slow: opts.slow
+    }),
   stream: (source, id) => apiGet('/api/music/stream', { source, id }),
   // 等价 Spotube 的 matches()：本音源拿不到播放地址时，用「曲名 + 艺术家 + 时长」去别的音源找
   match: (params) => apiGet('/api/music/match', params)

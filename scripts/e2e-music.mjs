@@ -217,6 +217,56 @@ try {
     await resp.arrayBuffer()
   }, { optional: true })
 
+  await step('yt-dlp 音源（服务端本机可执行文件）', async () => {
+    const listed = await json('/api/music/sources')
+    const source = (listed.data.sources || []).find((s) => s.kind === 'ytdlp')
+    expect(source, '音源列表里没有 ytdlp')
+    const checked = await json(`/api/music/sources/${encodeURIComponent(source.id)}/check`, { method: 'POST' })
+    if (checked.data.status !== 'ok') throw new Error('yt-dlp 不可用：' + (checked.data.error || '未知'))
+    const search = await json(
+      `/api/music/search?wd=${encodeURIComponent('shape of you')}&source=${encodeURIComponent(source.id)}&limit=3`
+    )
+    expect(search.status === 200, `HTTP ${search.status} ${search.data.error || ''}`)
+    const track = (search.data.results || [])[0]
+    expect(track, 'yt-dlp 没有搜到结果')
+    const stream = await json(
+      `/api/music/stream?source=${encodeURIComponent(source.id)}&id=${encodeURIComponent(track.id)}`
+    )
+    expect(stream.status === 200, `取流失败：${stream.data.error || stream.status}`)
+    expect((stream.data.streams || []).length > 0, 'yt-dlp 没有返回音频流')
+    expect(/^\/api\/music\/proxy\?url=/.test(stream.data.streams[0].playUrl), 'playUrl 不是本站代理地址')
+  }, { optional: true })
+
+  await step('两趟搜索：slow=exclude 只走快源且不含慢音源', async () => {
+    const { status, data } = await json(`/api/music/search?wd=${encodeURIComponent('hello')}&slow=exclude`)
+    expect(status === 200, `HTTP ${status}`)
+    const listed = await json('/api/music/sources')
+    const slowKinds = new Set((listed.data.meta || {}).slowKinds || [])
+    expect(slowKinds.size > 0, 'meta.slowKinds 为空')
+    for (const id of data.searched || []) {
+      const item = listed.data.sources.find((s) => s.id === id)
+      expect(!slowKinds.has(item?.kind), `slow=exclude 里混进了慢音源 ${id}`)
+    }
+  })
+
+  await step('两趟搜索：slow=only 只走慢音源', async () => {
+    const listed = await json('/api/music/sources')
+    const slowKinds = new Set((listed.data.meta || {}).slowKinds || [])
+    const available = listed.data.sources.filter((s) => slowKinds.has(s.kind) && s.status !== 'fail')
+    const { status, data } = await json(`/api/music/search?wd=${encodeURIComponent('shape of you')}&slow=only`)
+    expect(status === 200, `HTTP ${status}`)
+    if (!available.length) {
+      // 没有可用的慢音源时要回空结果，而不是 400（前端第二趟会经常走到这里）
+      expect((data.results || []).length === 0, '没有慢音源却返回了结果')
+      expect((data.searched || []).length === 0, 'searched 应为空')
+      return
+    }
+    for (const id of data.searched || []) {
+      const item = listed.data.sources.find((s) => s.id === id)
+      expect(slowKinds.has(item?.kind), `slow=only 里混进了快音源 ${id}`)
+    }
+  })
+
   await step('聚合搜索返回逐源错误而不是整体失败', async () => {
     const { status, data } = await json(`/api/music/search?wd=${encodeURIComponent('hello')}&limit=10`)
     expect(status === 200, `HTTP ${status} ${data.error || ''}`)

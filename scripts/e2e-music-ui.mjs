@@ -129,8 +129,12 @@ try {
     await page.goto(BASE + '/music', { waitUntil: 'domcontentloaded' })
     await page.waitForSelector('.music-search input', { timeout: 20000 })
     await page.fill('.music-search input', QUERY)
+    const started = Date.now()
     await page.press('.music-search input', 'Enter')
-    await page.waitForSelector('.music-row', { timeout: 30000 })
+    // 首屏必须由「快源那一趟」铺出来。如果哪天退回成单趟（等 yt-dlp 跑完才返回），
+    // 这里会超时 —— 这正是要守住的行为
+    await page.waitForSelector('.music-row', { timeout: 8000 })
+    console.log('     首屏 ' + (Date.now() - started) + 'ms')
     const rows = await page.locator('.music-row').count()
     expect(rows > 0, '没有结果行')
     console.log('     结果数: ' + rows)
@@ -138,9 +142,21 @@ try {
   }, { optional: true })
 
   await step('点击播放后 <audio> 真的开始加载', async () => {
-    const playBtn = page.locator('.music-row').first().locator('.music-play-btn')
+    // yt-dlp 给的直链落在 googlevideo 上，本机（DNS 被污染）播不了，
+    // 所以挑一条「不是 yt-dlp」的结果来验证浏览器侧真的能出声
+    const rows = page.locator('.music-row')
+    const total = await rows.count()
+    let target = 0
+    for (let i = 0; i < total; i += 1) {
+      if (!/yt-dlp/.test(await rows.nth(i).innerText())) {
+        target = i
+        break
+      }
+    }
+    const row = rows.nth(target)
+    const playBtn = row.locator('.music-play-btn')
     if (await playBtn.count()) await playBtn.first().click()
-    else await page.locator('.music-row').first().click()
+    else await row.click()
     await page.waitForSelector('.music-player', { timeout: 15000 })
     const state = await page.waitForFunction(
       () => {

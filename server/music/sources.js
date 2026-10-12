@@ -18,6 +18,7 @@ import * as piped from './piped.js'
 import * as invidious from './invidious.js'
 import * as jiosaavn from './jiosaavn.js'
 import * as itunes from './itunes.js'
+import * as ytdlp from './ytdlp.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.resolve(__dirname, '../../data')
@@ -25,12 +26,16 @@ const CUSTOM_FILE = path.join(DATA_DIR, 'music-sources.json')
 const PREFS_FILE = path.join(DATA_DIR, 'music-source-prefs.json')
 const DEFAULTS_FILE = path.join(__dirname, 'default-sources.json')
 
-const ADAPTERS = { piped, invidious, jiosaavn, itunes }
-// 只有「实例型」音源允许用户自己加地址；jiosaavn / itunes 是固定官方接口
+const ADAPTERS = { piped, invidious, jiosaavn, itunes, ytdlp }
+// 只有「实例型」音源允许用户自己加地址；jiosaavn / itunes 是固定官方接口，
+// ytdlp 是服务端本机可执行文件（地址由 YTDLP_PATH 决定），都不该出现在「新增」里
 const ADDABLE_KINDS = ['piped', 'invidious']
 
 const HEALTH_TTL_OK = 10 * 60 * 1000
+// 主动检测失败：证据强（确实连不上），退避久一点
 const HEALTH_TTL_FAIL = 30 * 60 * 1000
+// 搜索/取流过程中的偶发失败：证据弱（一次超时不代表源坏了），只短暂绕开
+const HEALTH_TTL_FAIL_TRANSIENT = 2 * 60 * 1000
 
 const KIND_INFO = {
   piped: {
@@ -52,6 +57,11 @@ const KIND_INFO = {
     label: 'Apple 试听',
     group: '试听',
     desc: '兜底音源：iTunes 30 秒试听片段，没有出网代理时也能出声'
+  },
+  ytdlp: {
+    label: 'yt-dlp',
+    group: 'YouTube',
+    desc: 'YouTube 音频，走服务端本机的 yt-dlp 可执行文件（Spotube 的 YouTube Engine 之一）'
   }
 }
 
@@ -65,6 +75,12 @@ export function kindInfo(kind) {
 
 export function addableKinds() {
   return ADDABLE_KINDS.map((kind) => ({ kind, label: KIND_INFO[kind].label }))
+}
+
+// 「慢音源」：一次调用要起进程 / 走外部程序（yt-dlp）。前端据此把搜索拆成两趟，
+// 快源先出结果、慢源回来再并入，不用让搜索框干等十几秒。
+export function slowKinds() {
+  return Object.keys(ADAPTERS).filter((kind) => ADAPTERS[kind]?.capabilities?.slow)
 }
 
 // 源 id 取「kind:host」：稳定、可读，且换路径不会影响已存的启停偏好
@@ -123,17 +139,20 @@ async function loadDefaults() {
   if (!Array.isArray(list)) return []
   return list
     .map((item) => {
-      const api = normalizeApi(item?.api)
       const kind = String(item?.kind || '')
-      if (!api || !ADAPTERS[kind]) return null
+      if (!ADAPTERS[kind]) return null
+      // local 型音源（yt-dlp）跑在本机，没有实例地址，用伪协议占位
+      const api = item?.local ? String(item.api || `${kind}://local`) : normalizeApi(item?.api)
+      if (!api) return null
       return {
-        id: sourceId(kind, api),
+        id: item?.id ? String(item.id) : sourceId(kind, api),
         kind,
         name: cleanName(item?.name, api),
         api,
         group: String(item?.group || '').trim() || kindInfo(kind).group,
         from: '内置',
-        builtin: true
+        builtin: true,
+        local: Boolean(item?.local)
       }
     })
     .filter(Boolean)
@@ -249,14 +268,26 @@ export async function removeSource(id) {
   return true
 }
 
-export function markHealth(id, ok, { latency = 0, error = '', version = '' } = {}) {
-  health.set(String(id), { ok: Boolean(ok), at: Date.now(), latency, error, version })
+// transient=true 表示这是「用着用着失败」而不是「检测失败」。
+// 搜索成功时不要传 latency —— 那会把检测测出来的真实延迟冲成 0。
+export function markHealth(id, ok, { latency, error = '', version = '', transient = false } = {}) {
+  const key = String(id)
+  const previous = health.get(key)
+  const measured = Number(latency) > 0 ? Number(latency) : previous?.latency || 0
+  health.set(key, {
+    ok: Boolean(ok),
+    at: Date.now(),
+    latency: measured,
+    error,
+    version: version || previous?.version || '',
+    transient: Boolean(transient)
+  })
 }
 
 function healthOf(id) {
-  const hit = health.get(String(id))
+  const hit = health.get(id)
   if (!hit) return { status: 'unknown', latency: 0, error: '', version: '' }
-  const ttl = hit.ok ? HEALTH_TTL_OK : HEALTH_TTL_FAIL
+  const ttl = hit.ok ? HEALTH_TTL_OK : hit.transient ? HEALTH_TTL_FAIL_TRANSIENT : HEALTH_TTL_FAIL
   if (Date.now() - hit.at > ttl) return { status: 'unknown', latency: 0, error: '', version: '' }
   return {
     status: hit.ok ? 'ok' : 'fail',
@@ -335,6 +366,7 @@ export async function checkSource(source) {
   } catch (err) {
     const latency = Date.now() - started
     const error = err?.message || '检测失败'
+    // 主动检测失败：证据足够强，按长退避处理
     markHealth(source.id, false, { latency, error })
     return { status: 'fail', latency, error, version: '' }
   }

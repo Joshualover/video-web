@@ -8,6 +8,7 @@
   { "kind": "invidious", "name": "Invidious · nerdvpn", "api": "https://invidious.nerdvpn.de", "group": "YouTube" },
   { "kind": "invidious", "name": "Invidious · yewtu.be", "api": "https://yewtu.be", "group": "YouTube" },
   { "kind": "invidious", "name": "Invidious · melmac", "api": "https://iv.melmac.space", "group": "YouTube" },
+  { "id": "ytdlp", "kind": "ytdlp", "name": "yt-dlp（本机）", "api": "yt-dlp://local", "group": "YouTube", "local": true },
   { "kind": "jiosaavn", "name": "JioSaavn", "api": "https://www.jiosaavn.com/api.php", "group": "JioSaavn" },
   { "kind": "itunes", "name": "Apple 试听", "api": "https://itunes.apple.com", "group": "试听" }
 ]

@@ -16,8 +16,22 @@ import {
   normalizeAudioFormat as invFormat
 } from '../server/music/invidious.js'
 import { normalizeSearchItem as itunesTrack } from '../server/music/itunes.js'
+import {
+  parseJsonOutput as ytdlpJson,
+  normalizeSearchEntry as ytdlpEntry,
+  pickAudioFormats as ytdlpFormats,
+  bestThumbnail as ytdlpThumb
+} from '../server/music/ytdlp.js'
 import { scoreMatch, publicTrack } from '../server/music/query.js'
-import { sourceId, rankSources, spreadByGroup, activeSources, kindInfo } from '../server/music/sources.js'
+import {
+  sourceId,
+  rankSources,
+  spreadByGroup,
+  activeSources,
+  kindInfo,
+  markHealth,
+  sourcesWithHealth
+} from '../server/music/sources.js'
 
 const hex = (value) => value.toString(16).toUpperCase().padStart(16, '0')
 
@@ -206,6 +220,51 @@ assert.equal(apple.pic, 'https://is1.mzstatic.com/image/thumb/x/dj.abc.jpg/600x6
 // 没有试听片段的曲目直接不收（收了也播不了）
 assert.equal(itunesTrack({ trackId: 1, trackName: 'x', previewUrl: '' }), null)
 
+// ---- 2b. yt-dlp 适配器的纯逻辑 ----
+// yt-dlp 正常只往 stdout 写 JSON，但用户 ~/.config/yt-dlp/config 里若加了别的输出就会混入杂行
+assert.deepEqual(ytdlpJson('{"a":1}'), { a: 1 })
+assert.deepEqual(ytdlpJson('\n{"a":1}\n'), { a: 1 })
+assert.deepEqual(ytdlpJson('WARNING: something\n{"a":1}\ntrailing'), { a: 1 })
+assert.throws(() => ytdlpJson(''), /没有输出/)
+assert.throws(() => ytdlpJson('not json at all'), /不是合法 JSON/)
+
+const ytEntry = ytdlpEntry({
+  id: 'JGwWNGJdvx8',
+  title: 'Ed Sheeran - Shape of You (Official Music Video)',
+  duration: 264.0,
+  channel: 'Ed Sheeran',
+  thumbnails: [
+    { url: 'https://i.ytimg.com/vi/x/hqdefault.jpg', width: 480 },
+    { url: 'https://i.ytimg.com/vi/x/maxresdefault.jpg', width: 1280 }
+  ]
+})
+assert.equal(ytEntry.id, 'JGwWNGJdvx8')
+assert.deepEqual(ytEntry.artists, ['Ed Sheeran'])
+assert.equal(ytEntry.duration, 264)
+assert.equal(ytEntry.pic, 'https://i.ytimg.com/vi/x/maxresdefault.jpg')
+assert.equal(ytEntry.externalUri, 'https://www.youtube.com/watch?v=JGwWNGJdvx8')
+// id 会拼进 watch?v=，必须先验形状，不能让它长得像命令行参数
+assert.equal(ytdlpEntry({ id: 'short', title: 'x' }), null)
+assert.equal(ytdlpEntry({ id: '--exec=rm -rf /', title: 'x' }), null)
+assert.equal(ytdlpEntry({ title: '没有 id' }), null)
+assert.equal(ytdlpThumb([{ url: 'ftp://x/a.jpg', width: 99 }]), '')
+
+const ytFormats = ytdlpFormats([
+  { format_id: '140', ext: 'm4a', acodec: 'mp4a.40.2', vcodec: 'none', abr: 129.496, url: 'https://rr1---x.googlevideo.com/a' },
+  { format_id: '251', ext: 'webm', acodec: 'opus', vcodec: 'none', abr: 126.413, url: 'https://rr1---x.googlevideo.com/b' },
+  { format_id: '249', ext: 'webm', acodec: 'opus', vcodec: 'none', abr: 48.817, url: 'https://rr1---x.googlevideo.com/c' },
+  // 带视频的不是我们想要的
+  { format_id: '18', ext: 'mp4', acodec: 'mp4a.40.2', vcodec: 'avc1.42001E', abr: 96, url: 'https://rr1---x.googlevideo.com/d' },
+  // 没有直链（走 m3u8 的条目）要丢掉，否则会把空地址传给播放器
+  { format_id: '233', ext: 'mp4', acodec: 'none', vcodec: 'none', abr: 0, url: '' }
+])
+assert.deepEqual(ytFormats.map((s) => s.bitrate), [129496, 126413, 48817])
+assert.equal(ytFormats[0].container, 'mp4')
+assert.equal(ytFormats[0].codec, 'mp4a')
+assert.equal(ytFormats[0].quality, '129 kbps')
+assert.equal(ytFormats[1].container, 'webm')
+assert.equal(ytFormats[1].codec, 'opus')
+
 // ---- 3. 匹配打分 ----
 assert.equal(scoreMatch({ name: '夜曲', artists: ['周杰伦'], duration: 227 }, { title: '夜曲', artists: ['周杰伦'], duration: 227 }), 8)
 assert.equal(scoreMatch({ name: '夜曲 (Live)', artists: ['周杰伦'] }, { title: '夜曲' }), 5)
@@ -247,5 +306,24 @@ const spread = spreadByGroup(
   6
 )
 assert.deepEqual(spread.map((s) => s.id), ['yt0', 'saavn', 'apple', 'yt1', 'yt2', 'yt3'])
+
+// 健康状态：搜索成功不能把检测测出来的延迟冲成 0
+markHealth('t:probe', true, { latency: 173, version: 'v1' })
+markHealth('t:probe', true)
+let health = sourcesWithHealth([{ id: 't:probe', kind: 'ytdlp' }])
+assert.equal(health[0].status, 'ok')
+assert.equal(health[0].latency, 173)
+assert.equal(health[0].version, 'v1')
+
+// 退避时长分两档：主动检测失败 30 分钟，用着用着失败（transient）只 2 分钟。
+// 把时钟往前拨 3 分钟来验证差别，免得靠等真实时间。
+markHealth('t:probe', false, { error: '检测失败' })
+markHealth('t:runtime', false, { error: '请求超时', transient: true })
+const realNow = Date.now
+Date.now = () => realNow() + 3 * 60 * 1000
+health = sourcesWithHealth([{ id: 't:probe', kind: 'piped' }, { id: 't:runtime', kind: 'piped' }])
+Date.now = realNow
+assert.deepEqual(health.map((item) => item.status), ['fail', 'unknown'])
+assert.equal(health[0].error, '检测失败')
 
 console.log('music source tests passed')

@@ -8,7 +8,7 @@ import { getJson } from './http.js'
 import { desDecryptBase64 } from './des.js'
 
 export const kind = 'jiosaavn'
-export const capabilities = { search: true, stream: true, preview: false }
+export const capabilities = { search: true, stream: true, preview: false, slow: false }
 
 const DES_KEY = '38346591'
 // 同一份音频在 CDN 上有几档码率，改文件名后缀即可（_96 → _320）

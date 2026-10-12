@@ -9,7 +9,7 @@
 import { getJson } from './http.js'
 
 export const kind = 'piped'
-export const capabilities = { search: true, stream: true, preview: false }
+export const capabilities = { search: true, stream: true, preview: false, slow: false }
 
 // search 的 filter 用 music_songs：只要「音乐」类结果，跟 Spotube 的曲目搜索对齐
 const SEARCH_FILTER = 'music_songs'

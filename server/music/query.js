@@ -42,7 +42,8 @@ export async function searchSource(source, wd, limit) {
   const adapter = adapterFor(source.kind)
   if (!adapter || !adapter.capabilities.search) throw new Error('该音源不支持搜索')
   const list = await adapter.fetchSearch(source.api, { wd, limit })
-  markHealth(source.id, true, { latency: 0 })
+  // 不传 latency：保留检测测出的真实延迟，别让一次搜索把它冲成 0
+  markHealth(source.id, true)
   return list
 }
 
@@ -55,12 +56,16 @@ export async function resolveStreams(source, id, track) {
 // 并发搜多个源，按源轮流交错，避免某一条通路把结果名单占满。
 //
 // 两个截止时间：国内没配代理时 Piped/Invidious 大多是「连不上、等超时」，
-// 如果一定等全部源结束，搜索框要转 9 秒。所以只要**已经有一个源出了结果**，
+// 如果一定等全部源结束，搜索框要转很久。所以只要**已经有一个源出了结果**，
 // 到软截止就直接返回，剩下的源继续在后台跑完（顺带把健康状态更新掉），
 // 用户下次搜索就会自动绕开这些慢源。
+//
+// 例外：目标里有「慢音源」（yt-dlp，一次搜索 6-15 秒）时软截止不生效。
+// 它慢是因为要起进程并访问 YouTube，而不是因为连不上；提早返回等于把它的结果
+// 静默丢掉，用户只会以为它坏了。既然装了 yt-dlp 就是为了要 YouTube 结果，那就等。
 export async function searchAll(
   sources,
-  { wd, limit = 40, perSource = 10, deadline = 9000, softDeadline = 3500 } = {}
+  { wd, limit = 40, perSource = 10, deadline = 12000, softDeadline = 3500 } = {}
 ) {
   const outcomes = new Array(sources.length).fill(null)
   let finished = false
@@ -71,7 +76,8 @@ export async function searchAll(
           outcomes[index] = { ok: true, source, list }
         },
         (err) => {
-          markHealth(source.id, false, { error: err?.message || '搜索失败' })
+          // 搜索里的一次超时是弱证据：只短暂绕开，别把一个好源打进 30 分钟冷宫
+          markHealth(source.id, false, { error: err?.message || '搜索失败', transient: true })
           outcomes[index] = { ok: false, source, error: err?.message || '搜索失败' }
         }
       )
@@ -80,7 +86,8 @@ export async function searchAll(
     finished = true
   })
 
-  const soft = Math.min(Math.max(softDeadline, 0), deadline)
+  const hasSlow = sources.some((source) => adapterFor(source.kind)?.capabilities?.slow)
+  const soft = hasSlow ? deadline : Math.min(Math.max(softDeadline, 0), deadline)
   await Promise.race([allDone, sleep(soft)])
   // 一个结果都没拿到就再多等一会儿 —— 空手而归还快，对用户没有价值
   const hasHits = () => outcomes.some((item) => item?.ok && item.list.length > 0)
@@ -158,7 +165,7 @@ export async function matchTrack({ title, artists = [], duration = 0, sources, d
       }
       const best = ranked[0]
       const data = await resolveStreams(source, best.track.id, best.track)
-      markHealth(source.id, true, { latency: 0 })
+      markHealth(source.id, true)
       return {
         matched: true,
         source: source.id,
@@ -170,7 +177,7 @@ export async function matchTrack({ title, artists = [], duration = 0, sources, d
         tried
       }
     } catch (err) {
-      markHealth(source.id, false, { error: err?.message || '匹配失败' })
+      markHealth(source.id, false, { error: err?.message || '匹配失败', transient: true })
       tried.push({ source: source.id, sourceName: source.name, error: err?.message || '匹配失败' })
     }
   }

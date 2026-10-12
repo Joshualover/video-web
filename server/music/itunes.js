@@ -8,7 +8,7 @@
 import { getJson } from './http.js'
 
 export const kind = 'itunes'
-export const capabilities = { search: true, stream: true, preview: true }
+export const capabilities = { search: true, stream: true, preview: true, slow: false }
 
 const MAX_LIMIT = 50
 

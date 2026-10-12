@@ -71,6 +71,12 @@ const listState = computed(() => {
   return musicStore.results.length ? 'ready' : 'empty'
 })
 
+// 慢音源（yt-dlp）是第二趟单独搜的，界面上要说清楚「还在搜什么」
+const slowSourceNames = computed(() => {
+  const names = musicStore.slowSources.map((item) => item.name)
+  return names.length ? names.join(' / ') : 'YouTube 音源'
+})
+
 const headTitle = computed(() => {
   if (tab.value === 'favorites') return '我的收藏'
   if (tab.value === 'history') return '播放历史'
@@ -254,7 +260,11 @@ onMounted(() => {
     <div class="section-head spaced">
       <h2>{{ headTitle }}</h2>
       <div class="music-head-actions">
-        <span v-if="listState === 'ready'" class="count-note">{{ items.length }} 首</span>
+        <span v-if="musicStore.searchingSlow" class="count-note music-slow-hint">
+          <Loader2 class="spin" :size="13" />
+          正在搜索 {{ slowSourceNames }}…
+        </span>
+        <span v-else-if="listState === 'ready'" class="count-note">{{ items.length }} 首</span>
         <button
           v-if="tab === 'favorites' && musicStore.favorites.length"
           class="btn btn-ghost btn-small"

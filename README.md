@@ -54,21 +54,32 @@ Spotube 把「曲目元数据」和「音频来源」拆成两个可插拔角色
 `supportedPresets` / `matches(track)` / `streams(match)` 三件事；本项目把后两件落成
 `/api/music/match` 与 `/api/music/stream`，只是省掉了 Spotify 那一步（搜索直接打在音源上，**不需要任何密钥**）。
 
-- **内置音源**（四种，见 [docs/music-sources.md](docs/music-sources.md)）：
-  - **Piped** / **Invidious**：Spotube 默认音源（YouTube 音频）在 Web 侧的等价实现 ——
-    桌面端 Spotube 用 Dart 的 YouTubeEngine（youtube_explode / newpipe / yt-dlp）直连 YouTube，
-    浏览器 + Node 跑不了那套内核，所以改走公开的 YouTube 前端 API 实例，
-    `local=true` 让实例代取 googlevideo 地址。**国内需要给服务端配 `VOD_HTTP_PROXY`**
+- **内置音源**（五种，见 [docs/music-sources.md](docs/music-sources.md)）：
+  - **yt-dlp**（推荐）：走服务端本机的 `yt-dlp` 可执行文件，对应 Spotube 的
+    `YoutubeClientEngine.ytDlp`。桌面端那套 Dart/Kotlin 内核（youtubeExplode / newPipe）
+    在 Web 侧没有等价物，yt-dlp 是子进程方案、Node 直接可用，也最跟得上 YouTube 的反爬变化。
+    **装了就参与搜索，没装则检测失败自动排除**，不拖慢没装它的机器。
+    它一次搜索要 6-15 秒，所以前端把搜索拆成**两趟**：快源先出结果，YouTube 结果回来后再并入
+  - **Piped** / **Invidious**：Spotube 4.x 音源在 Web 侧的等价实现，走公开的 YouTube 前端 API 实例，
+    `local=true` 让实例代取 googlevideo 地址。公开实例如今大面积失效，**要 YouTube 音频优先装 yt-dlp**
   - **JioSaavn**：Spotube 内置过的另一条音源，可直连；播放地址是 DES-ECB 加密的，
     服务端自带一份纯 JS 解密（Node 18+ 的 OpenSSL 3 默认不加载 legacy provider，`des-ecb` 用不了）
   - **Apple 试听**：兜底音源（不在 Spotube 里），iTunes 30 秒片段，没配代理时也能出声，界面上标「试听」
+- **取流要代理**：YouTube 的媒体域（googlevideo）在国内被 DNS 污染，取流需要给服务端配
+  `VOD_HTTP_PROXY`（yt-dlp 会自动带上）；JioSaavn 与 Apple 试听可直连
 - **聚合搜索**：一次并搜多个音源，结果按源轮流交错返回，每个源最多取 10 条，避免某个源占满名单；
   失败的源单独列在 `errors` 里（例如「出网代理没配」），不影响其它源出结果
-- **两个截止时间**：软截止 3.5 秒（已拿到结果就先返回，慢源继续在后台跑完并更新健康状态）、
-  硬截止 9 秒。没配代理时一批实例都在等超时，没有软截止搜索框要转 9 秒
-- **按分组轮流取源**：内置 9 个 YouTube 实例，若不轮流取，它们会把搜索名额吃光，
+- **两趟搜索**（前端）：第一趟 `slow=exclude` 只问快源，通常 1 秒内铺出结果；
+  第二趟 `slow=only` 单独问 yt-dlp，回来了再去重并入，期间结果区显示「正在搜索 yt-dlp…」。
+  不这么拆的话，开着 yt-dlp 的搜索框每次都要干等十几秒
+- **两个截止时间**（单次聚合搜索内部）：软截止 3.5 秒（已拿到结果就先返回，慢源继续在后台跑完
+  并更新健康状态）、硬截止 15 秒。没配代理时一批实例都在等超时，没有软截止搜索框要转很久。
+  目标里有慢音源（yt-dlp）时软截止不生效 —— 直接调接口的人应当拿到完整结果，
+  而不是被静默丢掉一部分
+- **按分组轮流取源**：内置 6 个 YouTube 实例，若不轮流取，它们会把搜索名额吃光，
   JioSaavn 与 Apple 试听永远轮不到
-- **音源健康检测 + 排序**：启动异步预热，可用源优先、失败源退避 30 分钟；音源管理页可逐个「测试」
+- **音源健康检测 + 排序**：启动异步预热，可用源优先；主动检测失败退避 30 分钟，
+  搜索/取流途中的偶发失败只退避 2 分钟（一次超时不代表源坏了）；音源管理页可逐个「测试」
 - **音源级启停 / 自定义实例**：偏好存 `data/music-source-prefs.json`；自定义 Piped / Invidious 实例存
   `data/music-sources.json`，新增时先过出网校验（防 SSRF），只允许删自己加的
 - **换源播放**：只知道曲名/艺术家时（收藏、历史恢复），逐源找最像的一首并直接返回可播流
@@ -79,14 +90,17 @@ Spotube 把「曲目元数据」和「音频来源」拆成两个可插拔角色
 环境变量：
 
 ```bash
+YTDLP_PATH=/usr/local/bin/yt-dlp  # yt-dlp 路径（默认自动查找 PATH 与常见安装位置）
+YTDLP_PLAYER_CLIENTS=android_vr,android,ios   # 依次尝试的 player client
+YTDLP_CONCURRENCY=2               # 同时运行的 yt-dlp 进程数上限
 MUSIC_SEARCH_SOURCES=6            # 一次聚合搜索最多并搜几个音源（1-20）
-MUSIC_SEARCH_DEADLINE=9000        # 硬截止（毫秒）
+MUSIC_SEARCH_DEADLINE=15000       # 硬截止（毫秒）
 MUSIC_SEARCH_SOFT_DEADLINE=3500   # 软截止（毫秒，已拿到结果就先返回）
 MUSIC_MATCH_SOURCES=4             # 换源播放最多依次试几个音源
 MUSIC_WARMUP=1                    # 启动后异步检测一遍音源，0 关闭
 ```
 
-> 音频来自第三方公开接口（YouTube 前端实例 / JioSaavn / iTunes），本项目不存储、不转码、不传播内容；
+> 音频来自第三方公开接口（yt-dlp 拉取的 YouTube / JioSaavn / iTunes），本项目不存储、不转码、不传播内容；
 > Piped / Invidious 实例均非本项目所有，可用性由对方决定。仅供本地学习使用。
 
 ### 其他
@@ -285,7 +299,8 @@ server/vod/fallback-sources.json 内置兜底影视源
 server/music/routes.js          /api/music/* 路由（搜索 / 取流 / 匹配 / 音源管理）
 server/music/sources.js         音乐源注册表（内置 + 自定义实例、启停、健康检测、分来源轮询）
 server/music/query.js           音乐查询入口（聚合搜索、换源匹配、曲目字段归一化）
-server/music/piped.js           Piped 适配器（YouTube 音频，Spotube 默认音源）
+server/music/ytdlp.js           yt-dlp 适配器（YouTube 音频，走服务端本机可执行文件）
+server/music/piped.js           Piped 适配器（YouTube 音频，Spotube 4.x 音源）
 server/music/invidious.js       Invidious 适配器（YouTube 音频）
 server/music/jiosaavn.js        JioSaavn 适配器（播放地址 DES 解密 + 多档码率）
 server/music/itunes.js          iTunes 试听适配器（30 秒片段，兜底音源）

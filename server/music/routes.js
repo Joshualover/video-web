@@ -7,6 +7,7 @@ import { handleHlsProxy } from '../vod/hls.js'
 import {
   activeSources,
   addSource,
+  adapterFor,
   checkSource,
   checkSources,
   getSources,
@@ -16,7 +17,8 @@ import {
   setSourceEnabled,
   sourcesWithHealth,
   spreadByGroup,
-  addableKinds
+  addableKinds,
+  slowKinds
 } from './sources.js'
 import { matchTrack, resolveStreams, searchAll } from './query.js'
 
@@ -24,7 +26,8 @@ const router = express.Router()
 
 // 搜索要扇出到多个实例，默认只挑前几个：源太多会让一次搜索等最慢的那个
 const SEARCH_SOURCES = Math.min(Math.max(Number(process.env.MUSIC_SEARCH_SOURCES) || 6, 1), 20)
-const SEARCH_DEADLINE = Math.min(Math.max(Number(process.env.MUSIC_SEARCH_DEADLINE) || 9000, 2000), 20000)
+// 硬截止要盖得住 yt-dlp 的一次搜索（实测 6-15 秒），否则它经常赶不上
+const SEARCH_DEADLINE = Math.min(Math.max(Number(process.env.MUSIC_SEARCH_DEADLINE) || 15000, 2000), 40000)
 // 拿到第一个结果就先回，不让慢源拖住搜索框
 const SEARCH_SOFT_DEADLINE = Math.min(
   Math.max(Number(process.env.MUSIC_SEARCH_SOFT_DEADLINE) || 3500, 500),
@@ -58,7 +61,12 @@ router.get('/sources', async (req, res) => {
     }
     res.json({
       sources: withHealth.map((item) => ({ ...item })),
-      meta: { proxy: proxyStatus(), addableKinds: addableKinds(), searchSources: SEARCH_SOURCES }
+      meta: {
+        proxy: proxyStatus(),
+        addableKinds: addableKinds(),
+        slowKinds: slowKinds(),
+        searchSources: SEARCH_SOURCES
+      }
     })
   } catch (err) {
     musicError(res, err, '加载音乐源失败')
@@ -117,6 +125,10 @@ router.get('/search', async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 40, 1), 80)
   const perSource = Math.min(Math.max(Number(req.query.perSource) || 10, 1), 30)
   try {
+    // slow=exclude：只要快源（前端第一趟）；slow=only：只要慢源（前端第二趟）。
+    // 缺省不拆，一次搜完 —— 直接调接口的人仍然只发一个请求就能拿全。
+    const slow = String(req.query.slow || '').trim()
+    const isSlow = (item) => Boolean(adapterFor(item.kind)?.capabilities?.slow)
     const all = await getSources()
     const requested = String(req.query.source || '').trim()
     let targets
@@ -126,10 +138,17 @@ router.get('/search', async (req, res) => {
       targets = [hit]
     } else {
       const healthy = sourcesWithHealth(activeSources(all)).filter((item) => item.status !== 'fail')
-      targets = spreadByGroup(rankSources(healthy), SEARCH_SOURCES)
-      if (!targets.length) targets = spreadByGroup(rankSources(activeSources(all)), Math.min(SEARCH_SOURCES, 4))
+      const ranked = rankSources(healthy.length ? healthy : activeSources(all))
+      let pool = ranked
+      if (slow === 'exclude') pool = ranked.filter((item) => !isSlow(item))
+      else if (slow === 'only') pool = ranked.filter(isSlow)
+      targets = spreadByGroup(pool, slow === 'only' ? pool.length : SEARCH_SOURCES)
     }
-    if (!targets.length) return res.status(400).json({ error: '没有可用的音乐源，请先在音源管理里启用' })
+    // slow=only 且没有慢音源时不是错误，正常回一个空结果（前端第二趟会经常走到这里）
+    if (!targets.length) {
+      if (slow) return res.json({ wd, results: [], errors: [], searched: [] })
+      return res.status(400).json({ error: '没有可用的音乐源，请先在音源管理里启用' })
+    }
     const { results, errors } = await searchAll(targets, {
       wd,
       limit,
@@ -184,10 +203,16 @@ router.get('/match', async (req, res) => {
   const duration = Number(req.query.duration) || 0
   try {
     const all = await getSources()
-    const targets = spreadByGroup(
+    // 换源是逐个试的：先把「快」的试完（JioSaavn / 试听通常 1 秒内出结果），
+    // 再拿 yt-dlp 兜底（一次十几秒），免得本来一首 JioSaavn 就有的歌也等十几秒
+    const ranked = spreadByGroup(
       rankSources(sourcesWithHealth(activeSources(all)).filter((item) => item.status !== 'fail')),
       MATCH_SOURCES
     )
+    const targets = [
+      ...ranked.filter((item) => !adapterFor(item.kind)?.capabilities?.slow),
+      ...ranked.filter((item) => adapterFor(item.kind)?.capabilities?.slow)
+    ]
     if (!targets.length) return res.status(400).json({ error: '没有可用的音乐源' })
     const result = await matchTrack({ title, artists, duration, sources: targets })
     res.json({ ...result, streams: result.matched ? withPlayUrl(result.streams, req) : [] })

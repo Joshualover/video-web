@@ -52,7 +52,10 @@ export const useMusicStore = defineStore('music', {
     results: [],
     errors: [],
     searching: false,
+    // 慢音源（yt-dlp，一次 5-15 秒）单独一趟在后台跑，回来后并入结果
+    searchingSlow: false,
     searchError: '',
+    searchSeq: 0,
 
     queue: [],
     currentIndex: -1,
@@ -75,6 +78,12 @@ export const useMusicStore = defineStore('music', {
     },
     disabledSourceCount(state) {
       return state.sources.filter((s) => s.enabled === false).length
+    },
+    // 服务端告诉前端哪些 kind 属于「慢音源」，这里不写死 yt-dlp
+    slowSources(state) {
+      const kinds = new Set(state.sourcesMeta?.slowKinds || [])
+      if (!kinds.size) return []
+      return state.sources.filter((s) => s.enabled !== false && kinds.has(s.kind))
     },
     currentTrack(state) {
       return state.currentIndex >= 0 ? state.queue[state.currentIndex] || null : null
@@ -153,30 +162,76 @@ export const useMusicStore = defineStore('music', {
     },
 
     // ---- 搜索 ----
+    // 两趟搜索：慢音源（yt-dlp 一次 5-15 秒）会把聚合搜索拖到十几秒，
+    // 所以第一趟只要快源、先把结果铺出来，第二趟单独问慢源、回来了再并入。
+    // searchSeq 是请求序号：用户连搜几次时，过期的响应直接丢弃。
     async search(wd) {
       const keyword = String(wd ?? this.query).trim()
       this.query = keyword
+      this.searchSeq += 1
+      const seq = this.searchSeq
       if (!keyword) {
         this.results = []
         this.errors = []
         this.searchError = ''
+        this.searching = false
+        this.searchingSlow = false
         return []
       }
       this.searching = true
+      this.searchingSlow = false
       this.searchError = ''
       this.errors = []
+      let list = []
       try {
-        const data = await musicApi.search(keyword, { source: this.previewSourceId || undefined, limit: 40 })
-        this.results = Array.isArray(data.results) ? data.results : []
+        const data = await musicApi.search(keyword, {
+          source: this.previewSourceId || undefined,
+          limit: 40,
+          slow: 'exclude'
+        })
+        if (seq !== this.searchSeq) return []
+        list = Array.isArray(data.results) ? data.results : []
+        this.results = list
         this.errors = Array.isArray(data.errors) ? data.errors : []
-        return this.results
       } catch (err) {
+        if (seq !== this.searchSeq) return []
         this.results = []
         this.errors = []
         this.searchError = err.message || '搜索失败'
         throw err
       } finally {
-        this.searching = false
+        if (seq === this.searchSeq) this.searching = false
+      }
+      if (this.slowSources.length) void this.searchSlow(keyword, seq)
+      return list
+    },
+
+    async searchSlow(keyword, seq) {
+      this.searchingSlow = true
+      try {
+        const data = await musicApi.search(keyword, {
+          source: this.previewSourceId || undefined,
+          limit: 40,
+          slow: 'only'
+        })
+        if (seq !== this.searchSeq) return
+        const extra = Array.isArray(data.results) ? data.results : []
+        const seen = new Set(this.results.map((item) => item.key))
+        this.results = [...this.results, ...extra.filter((item) => !seen.has(item.key))]
+        // 快源已经报过的错误不重复列
+        const known = new Set(this.errors.map((item) => item.source))
+        for (const item of data.errors || []) {
+          if (!known.has(item.source)) this.errors.push(item)
+        }
+      } catch (err) {
+        if (seq !== this.searchSeq) return
+        this.errors.push({
+          source: 'slow',
+          sourceName: 'YouTube 音源',
+          error: err.message || '搜索失败'
+        })
+      } finally {
+        if (seq === this.searchSeq) this.searchingSlow = false
       }
     },
 

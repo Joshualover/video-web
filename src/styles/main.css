@@ -3979,6 +3979,15 @@ input::placeholder {
 }
 
 /* ================== 音乐（MUSIC） ================== */
+
+/* 慢音源（yt-dlp）第二趟搜索中的提示：比结果数更弱，别抢注意力 */
+.music-slow-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-3, #8b8b8b);
+}
+
 .music-page {
   width: min(1240px, 100%);
   margin: 0 auto;

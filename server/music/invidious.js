@@ -8,7 +8,7 @@
 import { getJson } from './http.js'
 
 export const kind = 'invidious'
-export const capabilities = { search: true, stream: true, preview: false }
+export const capabilities = { search: true, stream: true, preview: false, slow: false }
 
 function absolute(url, apiBase) {
   const raw = String(url || '').trim()

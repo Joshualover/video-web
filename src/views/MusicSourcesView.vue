@@ -22,7 +22,8 @@ const KIND_LABELS = {
   piped: 'Piped',
   invidious: 'Invidious',
   jiosaavn: 'JioSaavn',
-  itunes: 'Apple 试听'
+  itunes: 'Apple 试听',
+  ytdlp: 'yt-dlp'
 }
 
 const form = reactive({ kind: 'piped', api: '', name: '' })
