@@ -48,6 +48,47 @@
 
 > 影视数据来自第三方采集接口，本项目不存储、不转码、不传播任何内容；可用性取决于对应源站。仅供本地学习使用。
 
+### 音乐（Spotube 音源）
+按 [Spotube](https://github.com/team-spotube/spotube) 的音源模型新增的「音乐」板块：搜索曲目 → 在线播放 → 管理音源。
+Spotube 把「曲目元数据」和「音频来源」拆成两个可插拔角色，音频源插件只实现
+`supportedPresets` / `matches(track)` / `streams(match)` 三件事；本项目把后两件落成
+`/api/music/match` 与 `/api/music/stream`，只是省掉了 Spotify 那一步（搜索直接打在音源上，**不需要任何密钥**）。
+
+- **内置音源**（四种，见 [docs/music-sources.md](docs/music-sources.md)）：
+  - **Piped** / **Invidious**：Spotube 默认音源（YouTube 音频）在 Web 侧的等价实现 ——
+    桌面端 Spotube 用 Dart 的 YouTubeEngine（youtube_explode / newpipe / yt-dlp）直连 YouTube，
+    浏览器 + Node 跑不了那套内核，所以改走公开的 YouTube 前端 API 实例，
+    `local=true` 让实例代取 googlevideo 地址。**国内需要给服务端配 `VOD_HTTP_PROXY`**
+  - **JioSaavn**：Spotube 内置过的另一条音源，可直连；播放地址是 DES-ECB 加密的，
+    服务端自带一份纯 JS 解密（Node 18+ 的 OpenSSL 3 默认不加载 legacy provider，`des-ecb` 用不了）
+  - **Apple 试听**：兜底音源（不在 Spotube 里），iTunes 30 秒片段，没配代理时也能出声，界面上标「试听」
+- **聚合搜索**：一次并搜多个音源，结果按源轮流交错返回，每个源最多取 10 条，避免某个源占满名单；
+  失败的源单独列在 `errors` 里（例如「出网代理没配」），不影响其它源出结果
+- **两个截止时间**：软截止 3.5 秒（已拿到结果就先返回，慢源继续在后台跑完并更新健康状态）、
+  硬截止 9 秒。没配代理时一批实例都在等超时，没有软截止搜索框要转 9 秒
+- **按分组轮流取源**：内置 9 个 YouTube 实例，若不轮流取，它们会把搜索名额吃光，
+  JioSaavn 与 Apple 试听永远轮不到
+- **音源健康检测 + 排序**：启动异步预热，可用源优先、失败源退避 30 分钟；音源管理页可逐个「测试」
+- **音源级启停 / 自定义实例**：偏好存 `data/music-source-prefs.json`；自定义 Piped / Invidious 实例存
+  `data/music-sources.json`，新增时先过出网校验（防 SSRF），只允许删自己加的
+- **换源播放**：只知道曲名/艺术家时（收藏、历史恢复），逐源找最像的一首并直接返回可播流
+- **播放器**：原生 `<audio>`，播放队列、上一首/下一首、进度拖拽、音量、记忆音量；封面走 `/api/music/image`，
+  音频走 `/api/music/proxy`（Range 透传，m3u8 会被重写）
+- **收藏 / 历史**：本地保存，可点击直接播放
+
+环境变量：
+
+```bash
+MUSIC_SEARCH_SOURCES=6            # 一次聚合搜索最多并搜几个音源（1-20）
+MUSIC_SEARCH_DEADLINE=9000        # 硬截止（毫秒）
+MUSIC_SEARCH_SOFT_DEADLINE=3500   # 软截止（毫秒，已拿到结果就先返回）
+MUSIC_MATCH_SOURCES=4             # 换源播放最多依次试几个音源
+MUSIC_WARMUP=1                    # 启动后异步检测一遍音源，0 关闭
+```
+
+> 音频来自第三方公开接口（YouTube 前端实例 / JioSaavn / iTunes），本项目不存储、不转码、不传播内容；
+> Piped / Invidious 实例均非本项目所有，可用性由对方决定。仅供本地学习使用。
+
 ### 其他
 - 登录保护：默认账号 `admin` / 密码 `admin123`（设置页可修改、退出）。**注意这只是本地 UI 门槛**：口令与登录态都只存在浏览器 localStorage，服务端不校验它，不能当作访问控制
 - 白天/夜晚主题切换（顶部太阳/月亮按钮，跟随系统默认，记住选择）
@@ -80,6 +121,7 @@ VOD_HTTP_PROXY=http://127.0.0.1:7890 VOD_NO_PROXY=.example.com,10.0.0.5 npm star
 - 只支持 http/https 代理（socks5 会提示忽略）；不支持 Vercel Serverless 环境
 - 不配置时行为与以前完全一致（全部直连）
 - 源管理页会显示当前代理状态
+- 音乐源共用同一份代理配置：Piped / Invidious（YouTube 音频）与影视源一样需要它，JioSaavn 与 Apple 试听可直连
 
 ## 代理与安全环境变量
 
@@ -240,6 +282,16 @@ server/vod/hls.js                播放地址解析 + HLS 代理（清单重写/
 server/vod/best.js               多源同片选路（搜索 + 测速排序）
 server/vod/default-configs.json  默认配置地址
 server/vod/fallback-sources.json 内置兜底影视源
+server/music/routes.js          /api/music/* 路由（搜索 / 取流 / 匹配 / 音源管理）
+server/music/sources.js         音乐源注册表（内置 + 自定义实例、启停、健康检测、分来源轮询）
+server/music/query.js           音乐查询入口（聚合搜索、换源匹配、曲目字段归一化）
+server/music/piped.js           Piped 适配器（YouTube 音频，Spotube 默认音源）
+server/music/invidious.js       Invidious 适配器（YouTube 音频）
+server/music/jiosaavn.js        JioSaavn 适配器（播放地址 DES 解密 + 多档码率）
+server/music/itunes.js          iTunes 试听适配器（30 秒片段，兜底音源）
+server/music/des.js             纯 JS 的 DES-ECB 解密（Node 的 OpenSSL 3 不带 legacy provider）
+server/music/http.js            音乐源出网封装（复用影视源的出口校验 + 代理）
+server/music/default-sources.json 内置音乐源实例清单
 data/                  m3u 播放列表目录（不入 git，需手动同步）
 api/                   Vercel Serverless（仅 /api/proxy、/api/health）
 vercel.json            Vercel 构建与路由配置
@@ -249,16 +301,22 @@ src/lib/m3u.js         m3u / m3u8 解析器（分组/属性/EXTGRP）
 src/lib/fetch.js       远程加载与代理降级
 src/lib/storage.js     localStorage 封装
 src/lib/vod.js         影视接口客户端
-src/stores/            播放列表 / 播放器 / 收藏最近 / UI / 登录 / 影视(源/收藏/历史/配置)
+src/lib/music.js       音乐接口客户端
+src/stores/            播放列表 / 播放器 / 收藏最近 / UI / 登录 / 影视(源/收藏/历史/配置) / 音乐(源/队列/收藏/历史)
 src/components/VodNav.vue  影视子导航
-src/views/             首页 / 频道列表 / 播放 / 收藏 / 最近 / 搜片 / 设置 / 登录 / 影视(发现/详情/播放/收藏/历史/源管理)
+src/components/MusicNav.vue 音乐子导航
+src/components/MusicPlayer.vue 音乐播放条 + 播放队列
+src/views/             首页 / 频道列表 / 播放 / 收藏 / 最近 / 搜片 / 设置 / 登录 / 影视(发现/详情/播放/收藏/历史/源管理) / 音乐(搜索 / 音源管理)
 scripts/test-m3u.mjs   m3u 解析器单元测试
+scripts/test-music.mjs 音乐源单元测试（DES 测试向量 / 各音源字段归一化 / 选源策略）
 scripts/e2e-hgd.mjs            内置短剧源（黄瓜短剧）端到端测试
 scripts/e2e-vidhub.mjs         内置影视站（Vidhub）端到端测试
 scripts/e2e-vod.mjs            影视流程端到端测试（需本机 Edge/Chrome）
 scripts/e2e-vod-features.mjs   收藏/历史/源管理/选路 端到端测试
 scripts/e2e-vod-features2.mjs  收藏分组/历史聚合/选路缓存 端到端测试
+scripts/e2e-music.mjs          音乐源端到端测试（API 层，自己拉实例，不需要浏览器）
 docs/code-review-2026-10.md    本轮安全加固与修复记录（问题清单 / 环境变量速查 / 上线检查清单）
+docs/music-sources.md          音乐源模型 / 内置音源 / 出网代理 / 环境变量 / 接口 / 排障
 ```
 
 > e2e 脚本会自动探测本机 Edge/Chrome（也可用 `EDGE_PATH` / `CHROME_PATH` 指定）；

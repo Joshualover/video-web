@@ -15,6 +15,8 @@ import VodPlayerView from './views/VodPlayerView.vue'
 import VodFavoritesView from './views/VodFavoritesView.vue'
 import VodHistoryView from './views/VodHistoryView.vue'
 import VodSourcesView from './views/VodSourcesView.vue'
+import MusicView from './views/MusicView.vue'
+import MusicSourcesView from './views/MusicSourcesView.vue'
 
 // 移动端：频道浏览先进入分组页（无 group 参数时）
 function mobileChannelGuard(to) {
@@ -49,6 +51,8 @@ const router = createRouter({
     { path: '/vod/favorites', name: 'vod-favorites', component: VodFavoritesView },
     { path: '/vod/history', name: 'vod-history', component: VodHistoryView },
     { path: '/vod/sources', name: 'vod-sources', component: VodSourcesView },
+    { path: '/music', name: 'music', component: MusicView },
+    { path: '/music/sources', name: 'music-sources', component: MusicSourcesView },
     { path: '/vod/detail/:site/:id', name: 'vod-detail', component: VodDetailView },
     { path: '/vod/play/:site/:id', name: 'vod-play', component: VodPlayerView }
   ],

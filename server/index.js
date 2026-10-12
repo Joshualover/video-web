@@ -36,6 +36,8 @@ import { handleImageProxy } from './vod/image.js'
 import { doubanOptions, fetchDoubanHot } from './vod/douban.js'
 import { listConfigs, addConfig, updateConfig, removeConfig } from './vod/config-store.js'
 import { findBestLines } from './vod/best.js'
+import musicRouter from './music/routes.js'
+import { checkSources as checkMusicSources, getSources as getMusicSources } from './music/sources.js'
 
 const app = express()
 app.disable('x-powered-by')
@@ -122,7 +124,7 @@ const RATE_LIMIT_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_PER_MIN ?? 600
 const RATE_LIMIT_HEAVY_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_HEAVY_PER_MIN ?? 30) || 0, 0)
 // 登录单独一档：防止拿口令爆破（WEB_LOGIN 场景）
 const RATE_LIMIT_LOGIN_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_LOGIN_PER_MIN ?? 10) || 0, 0)
-const HEAVY_ROUTE_RE = /^\/api\/(vod\/search|vod\/best|site-search|site-crawl)/
+const HEAVY_ROUTE_RE = /^\/api\/(vod\/search|vod\/best|site-search|site-crawl|music\/search|music\/match)/
 const RATE_LIMITS = {
   l: RATE_LIMIT_LOGIN_PER_MIN,
   h: RATE_LIMIT_HEAVY_PER_MIN,
@@ -137,6 +139,9 @@ function isHeavyRoute(req) {
   // ?check=1 / ?refresh=1 会触发全源健康检查或全量重抓，:id/check 同理
   if (req.path === '/api/vod/sources' && (req.query.check === '1' || req.query.refresh === '1')) return true
   if (req.path.startsWith('/api/vod/sources/')) return true
+  // 音乐源：一次检测 = 一轮出网请求；单个音的检测/启停也按重型端点算
+  if (req.path === '/api/music/sources' && req.query.check === '1') return true
+  if (req.path.startsWith('/api/music/sources/')) return true
   return false
 }
 
@@ -719,6 +724,28 @@ app.get('/api/vod/search', assertProxyToken, async (req, res) => {
     vodError(res, err, '搜索失败')
   }
 })
+
+// ---- 音乐源（Spotube 音源模型） ----
+// 内置的 Piped / Invidious 实例可用性差异极大（被墙、被 YouTube 限流、实例下线都常见），
+// 启动后先测一遍：失败源会在搜索时被排除，否则用户第一次搜索要等一批超时。
+// 与影视源不同，这里不让音乐源的失败拖慢启动 —— 预热是异步的，且可关。
+const MUSIC_WARMUP = (process.env.MUSIC_WARMUP ?? '1') !== '0'
+if (MUSIC_WARMUP) {
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const sources = await getMusicSources()
+        const checked = await checkMusicSources(sources, { deadline: 12000, concurrency: 6 })
+        const ok = checked.filter((item) => item.status === 'ok').length
+        console.log(`[music] 音源预热完成：${ok}/${checked.length} 个可用`)
+      } catch (err) {
+        console.error('[music] 音源预热失败:', err?.message || err)
+      }
+    })()
+  }, 4000)
+}
+
+app.use('/api/music', assertProxyToken, musicRouter)
 
 // ---- 站内搜索 / 抓取任务（两阶段） ----
 const crawlTasks = new Map()

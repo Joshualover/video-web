@@ -1,0 +1,13 @@
+[
+  { "kind": "piped", "name": "Piped · kavin.rocks", "api": "https://pipedapi.kavin.rocks", "group": "YouTube" },
+  { "kind": "piped", "name": "Piped · adminforge", "api": "https://pipedapi.adminforge.de", "group": "YouTube" },
+  { "kind": "piped", "name": "Piped · reallyaweso", "api": "https://pipedapi.reallyaweso.me", "group": "YouTube" },
+  { "kind": "piped", "name": "Piped · private.coffee", "api": "https://api.piped.private.coffee", "group": "YouTube" },
+  { "kind": "piped", "name": "Piped · drgns.space", "api": "https://pipedapi.drgns.space", "group": "YouTube" },
+  { "kind": "invidious", "name": "Invidious · nadeko.net", "api": "https://inv.nadeko.net", "group": "YouTube" },
+  { "kind": "invidious", "name": "Invidious · nerdvpn", "api": "https://invidious.nerdvpn.de", "group": "YouTube" },
+  { "kind": "invidious", "name": "Invidious · yewtu.be", "api": "https://yewtu.be", "group": "YouTube" },
+  { "kind": "invidious", "name": "Invidious · melmac", "api": "https://iv.melmac.space", "group": "YouTube" },
+  { "kind": "jiosaavn", "name": "JioSaavn", "api": "https://www.jiosaavn.com/api.php", "group": "JioSaavn" },
+  { "kind": "itunes", "name": "Apple 试听", "api": "https://itunes.apple.com", "group": "试听" }
+]
