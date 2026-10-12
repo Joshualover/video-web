@@ -100,9 +100,11 @@ export async function fetchStreams(api, { id } = {}) {
   }
 }
 
+// 同 Invidious：/healthcheck 只说明进程活着，不代表能搜。
+// 实测有实例 healthcheck 通、搜索却 403/404，所以直接探搜索接口。
 export async function check(api) {
-  const data = await getJson(`${api.replace(/\/+$/, '')}/healthcheck`, { timeout: 8000 })
-  if (!data || typeof data !== 'object') throw new Error('实例没有返回健康信息')
-  const version = String(data.version || '').trim()
-  return version ? `Piped ${version}` : 'Piped'
+  const base = api.replace(/\/+$/, '')
+  const data = await getJson(`${base}/search?q=test&filter=${SEARCH_FILTER}`, { timeout: 8000 })
+  if (!Array.isArray(data?.items)) throw new Error('搜索接口返回格式异常')
+  return 'Piped（搜索可用）'
 }

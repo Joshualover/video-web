@@ -191,6 +191,38 @@ export async function handleHlsProxy(req, res) {
 // 有的 CDN 必须直连（代理 IP 会被拒），有的偏偏只能走代理，所以成功的那条路会被记住。
 // 3xx（CDN 很常见）必须跟随：否则清单会拿到一个空体、分片会拿到一个没有 Location 的 302。
 const MAX_FOLLOW_REDIRECTS = 3
+// 上游明确拒绝（4xx）之后换路由重试时用的短超时：4xx 是确定性答复，不是网络抖动，
+// 换条路多半也是同样结果，没必要让客户端对着 20 秒的静默等一个 502。
+const RETRY_TIMEOUT_MS = 6000
+
+// 单次向上游要多少字节。1MiB 是实测出来的：YouTube 对没解出 n 签名的直链按大小限流，
+//   bytes=0-1048575 -> 206（1MiB 可以）
+//   bytes=0-2097151 -> 403（2MiB 就拒）
+// 取整 1MiB 作为每次请求的上限。
+const RANGE_CHUNK_BYTES = 1024 * 1024
+
+// 把客户端的 Range 收成一段「不超过 RANGE_CHUNK_BYTES」的有界区间。
+// 为什么需要：部分 CDN 只肯按小分片给数据 —— 实测 YouTube 的 googlevideo 对同一条直链
+//   bytes=0-      -> 403
+//   不带 Range    -> 403
+//   bytes=0-2047  -> 206
+// 而浏览器 <audio>/<video> 的首发请求恰好是 bytes=0-（或一个很大的闭区间），
+// 于是表现为「点了播放一直转圈、最后 502」。收小之后上游返回 206 + Content-Range，
+// 播放器拿到总长度会自己继续要后面的分片。
+// 返回 null 表示「不用改」（已经够小，或是不认识的写法），调用方按原样重试路由。
+export function boundedRange(rangeHeader, chunk = RANGE_CHUNK_BYTES) {
+  const raw = String(rangeHeader || '').trim()
+  if (!raw) return `bytes=0-${chunk - 1}`
+  const matched = raw.match(/^bytes=(\d+)-(\d*)$/i)
+  if (!matched) return null
+  const start = Number(matched[1])
+  if (!Number.isFinite(start) || start < 0) return null
+  if (matched[2] === '') return `bytes=${start}-${start + chunk - 1}`
+  const end = Number(matched[2])
+  if (!Number.isFinite(end) || end < start) return null
+  // 闭区间但比上限大：同样收小（少给一些字节是合法的，客户端会再要）
+  return end - start + 1 > chunk ? `bytes=${start}-${start + chunk - 1}` : null
+}
 
 function fetchUpstream(req, res, url, state) {
   const lib = url.protocol === 'https:' ? https : http
@@ -201,13 +233,14 @@ function fetchUpstream(req, res, url, state) {
     Referer: `${url.protocol}//${url.host}/`,
     Connection: 'close'
   }
-  if (req.headers.range) headers.Range = req.headers.range
+  if (state.rangeOverride) headers.Range = state.rangeOverride
+  else if (req.headers.range) headers.Range = req.headers.range
 
   const agent = agentFor(url, { force: state.force })
   const route = agent ? 'proxy' : 'direct'
   let settled = false
 
-  const retryOtherRoute = (reason) => {
+  const retryOtherRoute = (reason, { timeout } = {}) => {
     if (settled || res.headersSent) return
     settled = true
     const other = route === 'proxy' ? 'direct' : 'proxy'
@@ -217,7 +250,7 @@ function fetchUpstream(req, res, url, state) {
       console.warn(
         `[vod] ${url.hostname} ${route === 'proxy' ? '代理' : '直连'}失败（${reason}），改用${other === 'proxy' ? '代理' : '直连'}重试`
       )
-      fetchUpstream(req, res, url, { ...state, retried: true, force: other })
+      fetchUpstream(req, res, url, { ...state, retried: true, force: other, timeout })
       return
     }
     res.status(502).json({ error: reason || '上游请求失败' })
@@ -225,7 +258,7 @@ function fetchUpstream(req, res, url, state) {
 
   const upstream = lib.get(
     url,
-    { rejectUnauthorized: !ALLOW_INSECURE_TLS, agent, headers, timeout: 20000 },
+    { rejectUnauthorized: !ALLOW_INSECURE_TLS, agent, headers, timeout: state.timeout || 20000 },
     (remote) => {
       const code = remote.statusCode || 0
       if (code >= 300 && code < 400 && remote.headers.location) {
@@ -257,7 +290,21 @@ function fetchUpstream(req, res, url, state) {
       }
       if (code >= 400 || code < 200) {
         remote.resume()
-        retryOtherRoute(`上游返回 ${code}`)
+        // 先试「把开放区间收成有界区间」，再谈换路由：googlevideo 这类上游
+        // 拒绝的是无界 Range，换成直连一样会被拒（实测两条路都是 403）。
+        if (!state.ranged) {
+          const nextRange = boundedRange(headers.Range)
+          if (nextRange) {
+            settled = true
+            console.warn(`[vod] ${url.hostname} 上游返回 ${code}，改用有界 Range 重试`)
+            fetchUpstream(req, res, url, { ...state, ranged: true, rangeOverride: nextRange })
+            return
+          }
+        }
+        retryOtherRoute(`上游返回 ${code}`, {
+          // 收成有界 Range 后仍被拒 = 上游确定性拒绝，换路由给个短超时
+          timeout: state.ranged ? RETRY_TIMEOUT_MS : undefined
+        })
         return
       }
       settled = true

@@ -66,7 +66,10 @@ Spotube 把「曲目元数据」和「音频来源」拆成两个可插拔角色
     服务端自带一份纯 JS 解密（Node 18+ 的 OpenSSL 3 默认不加载 legacy provider，`des-ecb` 用不了）
   - **Apple 试听**：兜底音源（不在 Spotube 里），iTunes 30 秒片段，没配代理时也能出声，界面上标「试听」
 - **取流要代理**：YouTube 的媒体域（googlevideo）在国内被 DNS 污染，取流需要给服务端配
-  `VOD_HTTP_PROXY`（yt-dlp 会自动带上）；JioSaavn 与 Apple 试听可直连
+  `VOD_HTTP_PROXY`（yt-dlp 会自动带上）；JioSaavn 与 Apple 试听可直连。
+  **即便如此，YouTube 能否整首播完还取决于代理出口 IP 的「信誉」**：实测数据中心 IP 会被
+  YouTube 限流成「只给前 1MiB」，表现为播一小段就停。此时换住宅出口，或改用下面两条直连音源。
+  详见 [docs/music-sources.md](docs/music-sources.md)
 - **聚合搜索**：一次并搜多个音源，结果按源轮流交错返回，每个源最多取 10 条，避免某个源占满名单；
   失败的源单独列在 `errors` 里（例如「出网代理没配」），不影响其它源出结果
 - **两趟搜索**（前端）：第一趟 `slow=exclude` 只问快源，通常 1 秒内铺出结果；
@@ -128,6 +131,17 @@ VOD_HTTP_PROXY=http://127.0.0.1:7890 npm start
 # 多个直连白名单
 VOD_HTTP_PROXY=http://127.0.0.1:7890 VOD_NO_PROXY=.example.com,10.0.0.5 npm start
 ```
+
+嫌每次手打环境变量麻烦的话，复制 `.env.example` 为 `.env` 即可（`.env` 在 `.gitignore` 中，不进版本库）：
+
+```bash
+cp .env.example .env
+# 编辑 .env：VOD_HTTP_PROXY=http://127.0.0.1:7890
+npm start
+```
+
+`.env` 的解析刻意做得很简单：`KEY=value`、`#` 注释、值可用单双引号包起来，不支持变量展开；
+**命令行 / PM2 / Docker 上显式传的环境变量优先**，不会被 `.env` 覆盖。
 
 说明：
 - 也兼容标准的 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`（以及小写形式）
@@ -307,6 +321,8 @@ server/music/itunes.js          iTunes 试听适配器（30 秒片段，兜底�
 server/music/des.js             纯 JS 的 DES-ECB 解密（Node 的 OpenSSL 3 不带 legacy provider）
 server/music/http.js            音乐源出网封装（复用影视源的出口校验 + 代理）
 server/music/default-sources.json 内置音乐源实例清单
+server/env.js                   读取根目录 .env（真实环境变量优先，不引入 dotenv）
+.env.example                    环境变量模板（复制成 .env 使用，.env 不进版本库）
 data/                  m3u 播放列表目录（不入 git，需手动同步）
 api/                   Vercel Serverless（仅 /api/proxy、/api/health）
 vercel.json            Vercel 构建与路由配置
@@ -324,6 +340,8 @@ src/components/MusicPlayer.vue 音乐播放条 + 播放队列
 src/views/             首页 / 频道列表 / 播放 / 收藏 / 最近 / 搜片 / 设置 / 登录 / 影视(发现/详情/播放/收藏/历史/源管理) / 音乐(搜索 / 音源管理)
 scripts/test-m3u.mjs   m3u 解析器单元测试
 scripts/test-music.mjs 音乐源单元测试（DES 测试向量 / 各音源字段归一化 / 选源策略）
+scripts/test-hls.mjs  播放代理的 Range 处理测试（开放区间收成有界区间）
+scripts/test-env.mjs  .env 解析测试
 scripts/e2e-hgd.mjs            内置短剧源（黄瓜短剧）端到端测试
 scripts/e2e-vidhub.mjs         内置影视站（Vidhub）端到端测试
 scripts/e2e-vod.mjs            影视流程端到端测试（需本机 Edge/Chrome）

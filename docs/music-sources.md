@@ -69,7 +69,37 @@ VOD_HTTP_PROXY=http://127.0.0.1:7890   # 与影视源共用同一个代理配置
 VOD_NO_PROXY=aac.saavncdn.com          # 需要直连的域名（逗号分隔）
 ```
 
+也可以写进仓库根目录的 `.env`（`.gitignore` 已排除，`.env.example` 是模板），省得每次手打：
+
+```bash
+cp .env.example .env
+echo 'VOD_HTTP_PROXY=http://127.0.0.1:7892' >> .env
+npm start
+```
+
+已存在的真实环境变量优先，不会被 `.env` 覆盖。
 代理只影响服务端出网；浏览器始终只跟本站说话（音频也走 `/api/music/proxy`）。
+
+### 代理出口 IP 会决定 YouTube 能不能整首播完
+
+这一点很容易被误判成「代码有 bug」，所以单独说明。实测（2026-10，数据中心代理出口）：
+
+| 请求 | 结果 |
+| --- | --- |
+| `Range: bytes=0-1048575`（1 MiB） | 206，正常返回 |
+| `Range: bytes=1048576-2097151`（往后挪 1 MiB） | **403**（`server: gvs 1.0`，YouTube 自己拒的） |
+| 换一条**全新解出来**的直链，直接从 1 MiB 处取 | 仍然 403 |
+
+也就是说：YouTube 对「没解出 `n` 签名」的直链按 IP 限流，只给文件开头那一小段，
+后面的 Range 一律 403 —— 换 URL、换路由、换 yt-dlp 参数都没用（实测 yt-dlp 自己下载
+也只能拿到 ~500KB）。**这是出口 IP 信誉问题**，不是本项目能绕过的。
+
+要整首播完，只有两条路：
+1. 换一个「干净」的出口（住宅 IP 通常可以）；
+2. 升级 yt-dlp 到支持 `--js-runtimes` 的版本（本项目实测的 2025.10.14 还不支持）并装 deno，
+   让它解出 `n` 签名拿到不限流的地址。
+
+在此之前，JioSaavn 与 Apple 试听两条直连音源不受影响，可以正常放完。
 
 ## 环境变量
 
@@ -162,6 +192,8 @@ Piped / Invidious 的公开实例可用性波动很大（下线、被 YouTube �
 | 音源管理里 yt-dlp 显示「未安装」 | 服务端那台机器上没有 yt-dlp；装完点一次「测试」即可（见上文） |
 | yt-dlp 报 `The page needs to be reloaded` | 该 player client 被 YouTube 挡了，调 `YTDLP_PLAYER_CLIENTS` 换一组 |
 | yt-dlp 报 `HTTP Error 403` | 拿到了地址但媒体域不可达（国内直连 googlevideo 的典型表现）：配 `VOD_HTTP_PROXY` |
+| 能搜到、能开始播，**播一小段就停**（约 1 分钟） | 上游按 IP 限流，见上一节：换住宅出口，或改用 JioSaavn / Apple 试听 |
+| Piped 报 `SignInConfirmNotBotException` | 该实例的 IP 被 YouTube 判为机器人；换实例或改用 yt-dlp |
 | 搜索要 10 秒以上 | 目标是等 yt-dlp（它本来就是秒级到十几秒）；不需要 YouTube 结果就停用它 |
 | 播放报错 / 一直转圈 | 音源的直链有效期有限（YouTube 系通常几小时），重新点一次播放即可；仍不行就换一个音源 |
 | Piped 报「没有返回音频流」 | 该实例被 YouTube 限流，换一个 Piped 实例 |

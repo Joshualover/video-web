@@ -95,9 +95,11 @@ export async function fetchStreams(api, { id } = {}) {
   }
 }
 
+// 健康检测必须打「真正要用的那个接口」。不少实例活着但把 /api/v1/search 关了
+// （返回 403 "Endpoint disabled"），只看 /stats 会把它判成可用 —— 实测 inv.nadeko.net 就是。
 export async function check(api) {
-  const data = await getJson(`${api.replace(/\/+$/, '')}/api/v1/stats`, { timeout: 8000 })
-  if (!data || typeof data !== 'object') throw new Error('实例没有返回统计信息')
-  const version = String(data.version || '').trim()
-  return version ? `Invidious ${version}` : 'Invidious'
+  const base = api.replace(/\/+$/, '')
+  const data = await getJson(`${base}/api/v1/search?q=test&type=video`, { timeout: 8000 })
+  if (!Array.isArray(data)) throw new Error('搜索接口返回格式异常（实例可能禁用了 /api/v1/search）')
+  return 'Invidious（搜索可用）'
 }

@@ -1,3 +1,6 @@
+// 必须第一个 import：proxy-core.js 在模块顶层就读 PROXY_TOKEN / ALLOW_PRIVATE_NETWORK，
+// .env 得在那之前进到 process.env 里（见 server/env.js）
+import './env.js'
 import express from 'express'
 import compression from 'compression'
 import path from 'node:path'
