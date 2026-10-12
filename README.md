@@ -258,8 +258,17 @@ scripts/e2e-vidhub.mjs         内置影视站（Vidhub）端到端测试
 scripts/e2e-vod.mjs            影视流程端到端测试（需本机 Edge/Chrome）
 scripts/e2e-vod-features.mjs   收藏/历史/源管理/选路 端到端测试
 scripts/e2e-vod-features2.mjs  收藏分组/历史聚合/选路缓存 端到端测试
+docs/code-review-2026-10.md    本轮安全加固与修复记录（问题清单 / 环境变量速查 / 上线检查清单）
 ```
+
+> e2e 脚本会自动探测本机 Edge/Chrome（也可用 `EDGE_PATH` / `CHROME_PATH` 指定）；
+> 部署启用了 `WEB_LOGIN` 时需要额外提供 `LOGIN_USER` / `LOGIN_PASS`。
 
 ## 免责声明
 
 本项目仅提供播放工具，不存储、不转码、不传播任何音视频内容；播放可用性取决于第三方源站。
+
+## 变更记录
+
+本轮安全加固与修复的完整记录（问题清单与对应提交、环境变量速查、上线检查清单、已知取舍）见
+[docs/code-review-2026-10.md](docs/code-review-2026-10.md)。
