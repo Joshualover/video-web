@@ -53,11 +53,19 @@ sudo apt install -y yt-dlp
 python3 -m pip install -U yt-dlp
 ```
 
-服务端按 `YTDLP_PATH` → `PATH` → 常见安装位置（`/opt/homebrew/bin`、`/usr/local/bin`、
-`/usr/bin`、`~/.local/bin`、`~/Library/Python/3.9/bin`）的顺序查找可执行文件。
-装完后**不必重启服务**，在音源管理页点一次「测试」即可（失败结果只缓存 1 分钟）。
+服务端会把 `YTDLP_PATH`（显式指定则只用它）与 `PATH` / 常见安装位置
+（`/opt/homebrew/bin`、`/usr/local/bin`、`/usr/bin`、`~/.local/bin`、`~/Library/Python/3.9/bin`）
+里的候选**都问一遍 `--version`，选用版本最高的那个** —— 一台机器上同时装着 pip 的旧版和
+brew 的新版很常见，而旧版会拿到被限流的直链。装完后**不必重启服务**，在音源管理页点一次
+「测试」即可（失败结果只缓存 1 分钟）。
 
-用 Docker 部署的话，记得把 yt-dlp 装进运行阶段镜像（`Dockerfile` 里本项目默认不含它）。
+关于 `PATH`：适配器会把「yt-dlp 自己所在的目录」和几个常见位置**补进子进程的 `PATH`**。
+yt-dlp 是按 `PATH` 找 JS runtime（deno）的，而 PM2 / systemd / launchd 起的服务 `PATH`
+往往只有 `/usr/bin:/bin` —— 这是「终端里好使、服务里不好使」的经典来源。
+deno 装在别处时，在启动配置里显式补：`PATH=/your/deno/bin:$PATH`。
+
+Docker 部署默认不含 yt-dlp（镜像会大一百多 MB）。要装的话，
+[README](../README.md#部署要求音乐-youtube-音源) 里有一段可直接粘贴的 Dockerfile 片段。
 
 ## 出网代理
 

@@ -83,12 +83,44 @@ function candidatePaths() {
   return out
 }
 
+// yt-dlp 解 YouTube 的 nsig 签名时要找一个 JS runtime（deno），而它是**按 PATH 找**的。
+// 找不到就会退回被限流的直链 —— 表现为「能搜到、能开始播，一小段就停」，很难往 PATH 上想。
+// PM2 / systemd / launchd 起的服务 PATH 往往只有 /usr/bin:/bin，于是同一个 yt-dlp
+// 在终端里好使、在服务里就不好使。这里显式把「yt-dlp 自己所在的目录」和几个常见
+// 安装位置补进子进程的 PATH（真实环境变量里的其它变量照旧传下去）。
+function runtimePath(binaryPath) {
+  const extra = []
+  if (binaryPath && binaryPath.includes('/')) extra.push(path.dirname(binaryPath))
+  const home = os.homedir()
+  extra.push(
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    path.join(home, '.local/bin'),
+    path.join(home, '.deno/bin')
+  )
+  const seen = new Set()
+  const merged = []
+  for (const dir of [...extra, ...String(process.env.PATH || '').split(':')]) {
+    const clean = dir.trim()
+    if (!clean || seen.has(clean)) continue
+    seen.add(clean)
+    merged.push(clean)
+  }
+  return merged.join(':')
+}
+
+export function childEnv(binaryPath) {
+  return { ...process.env, PATH: runtimePath(binaryPath) }
+}
+
 function runFile(binary, args, { timeout, encoding = 'utf8' } = {}) {
   return new Promise((resolve) => {
     execFile(
       binary,
       args,
-      { timeout, maxBuffer: MAX_OUTPUT, encoding, windowsHide: true },
+      { timeout, maxBuffer: MAX_OUTPUT, encoding, windowsHide: true, env: childEnv(binary) },
       (err, stdout, stderr) => {
         resolve({
           code: err?.code ?? 0,

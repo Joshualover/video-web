@@ -277,6 +277,55 @@ node -e "import('./server/crawler.js').then(m=>console.log('浏览器:', m.findB
 
 > `playwright-core` 与系统包二选一即可；crawler 会依次探测 `BROWSER_PATH` → 系统 Chrome/Chromium → playwright 缓存目录。
 
+## 部署要求（音乐 YouTube 音源）
+
+「音乐」板块里 Piped / Invidious 是纯 HTTP 调用，装不装东西都能跑；**yt-dlp 需要服务端有可执行文件**，
+而且要**足够新**（旧版会被 YouTube 限流成「只给前 1MiB」，表现为播一小段就停）：
+
+```bash
+# 方式一：Homebrew（macOS，会顺带装上 deno）
+brew install yt-dlp
+
+# 方式二：Debian / Ubuntu
+sudo apt install -y yt-dlp
+
+# 方式三：任意平台（也会带上 deno 作为 JS runtime）
+python3 -m pip install -U yt-dlp
+```
+
+验证是否可用（适配器会**自动选用版本最高的那个**，可从版本号确认）：
+
+```bash
+curl -sS http://127.0.0.1:8787/api/music/sources/ytdlp/check -X POST
+# 期望：{"ok":true,"status":"ok","version":"yt-dlp 2026.08.19", ...}
+```
+
+⚠️ **服务进程的 `PATH` 要能找到 `deno`**。yt-dlp 是按 `PATH` 找 JS runtime 的，
+而 PM2 / systemd / launchd 起的服务 `PATH` 往往只有 `/usr/bin:/bin` ——
+同一个 yt-dlp 在终端里好使、在服务里就不好使。适配器已经会把「yt-dlp 自己所在的目录」
+和 `/opt/homebrew/bin`、`/usr/local/bin` 等常见位置补进子进程的 `PATH`；
+若 deno 装在别处，在启动配置里显式补上：
+
+```js
+// ecosystem.config.cjs
+env: { PATH: `/opt/homebrew/bin:${process.env.PATH}` }
+```
+
+Docker 部署默认**不含** yt-dlp（镜像会大一百多 MB），需要时在运行阶段加：
+
+```dockerfile
+# 在 Dockerfile 的运行阶段追加（Alpine 用 musl 版静态二进制）
+RUN apk add --no-cache curl xz \
+ && curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_musllinux \
+ && chmod +x /usr/local/bin/yt-dlp \
+ && curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip \
+ && unzip -o /tmp/deno.zip -d /usr/local/bin && chmod +x /usr/local/bin/deno && rm /tmp/deno.zip \
+ && apk del curl xz
+```
+
+> 以上 Dockerfile 片段未经本机验证（开发机没有 Docker），只是把上面几条安装命令翻译成
+> 容器里的写法；镜像架构不是 x86_64 时记得换成对应的 deno 包名。
+
 ## Vercel 一键部署
 
 内置 `vercel.json` 与 `api/` Serverless Function，可直接部署（仅静态托管 + `/api/proxy`，**不含搜片**，搜片需自有服务器）：

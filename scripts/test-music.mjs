@@ -22,7 +22,8 @@ import {
   pickAudioFormats as ytdlpFormats,
   bestThumbnail as ytdlpThumb,
   compareVersions,
-  pickNewest
+  pickNewest,
+  childEnv
 } from '../server/music/ytdlp.js'
 import { scoreMatch, publicTrack } from '../server/music/query.js'
 import {
@@ -288,6 +289,20 @@ assert.equal(
 assert.equal(pickNewest([{ path: 'only', version: '2025.01.01' }]).path, 'only')
 assert.equal(pickNewest([]), null)
 assert.equal(pickNewest(undefined), null)
+
+// 子进程的 PATH：PM2 / systemd / launchd 起的服务 PATH 往往只有 /usr/bin:/bin，
+// 而 yt-dlp 是按 PATH 找 JS runtime（deno）的，所以要把常见位置补上、并保持去重。
+const savedPath = process.env.PATH
+process.env.PATH = '/custom/a:/custom/b:/opt/homebrew/bin'
+const childPath = childEnv('/opt/homebrew/bin/yt-dlp').PATH.split(':')
+process.env.PATH = savedPath
+
+assert.ok(childPath.includes('/opt/homebrew/bin'), '缺 yt-dlp 自己所在的目录')
+assert.ok(childPath.includes('/custom/a') && childPath.includes('/custom/b'), '原有 PATH 条目被丢了')
+assert.ok(childPath.includes('/usr/bin') && childPath.includes('/bin'), '缺系统目录')
+assert.equal(childPath.filter((item) => item === '/opt/homebrew/bin').length, 1, '/opt/homebrew/bin 出现了多次')
+assert.equal(new Set(childPath).size, childPath.length, 'PATH 里不应有重复项')
+assert.ok(!childPath.includes(''), 'PATH 里不应有空条目')
 
 // ---- 3. 匹配打分 ----
 assert.equal(scoreMatch({ name: '夜曲', artists: ['周杰伦'], duration: 227 }, { title: '夜曲', artists: ['周杰伦'], duration: 227 }), 8)
