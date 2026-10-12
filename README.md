@@ -348,6 +348,7 @@ scripts/e2e-vod.mjs            影视流程端到端测试（需本机 Edge/Chro
 scripts/e2e-vod-features.mjs   收藏/历史/源管理/选路 端到端测试
 scripts/e2e-vod-features2.mjs  收藏分组/历史聚合/选路缓存 端到端测试
 scripts/e2e-music.mjs          音乐源端到端测试（API 层，自己拉实例，不需要浏览器）
+scripts/e2e-hls-range.mjs      播放代理 Range 兜底端到端测试（起一台「只认有界 Range」的假 CDN）
 docs/code-review-2026-10.md    本轮安全加固与修复记录（问题清单 / 环境变量速查 / 上线检查清单）
 docs/music-sources.md          音乐源模型 / 内置音源 / 出网代理 / 环境变量 / 接口 / 排障
 ```
