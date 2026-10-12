@@ -20,7 +20,9 @@ import {
   parseJsonOutput as ytdlpJson,
   normalizeSearchEntry as ytdlpEntry,
   pickAudioFormats as ytdlpFormats,
-  bestThumbnail as ytdlpThumb
+  bestThumbnail as ytdlpThumb,
+  compareVersions,
+  pickNewest
 } from '../server/music/ytdlp.js'
 import { scoreMatch, publicTrack } from '../server/music/query.js'
 import {
@@ -264,6 +266,28 @@ assert.equal(ytFormats[0].codec, 'mp4a')
 assert.equal(ytFormats[0].quality, '129 kbps')
 assert.equal(ytFormats[1].container, 'webm')
 assert.equal(ytFormats[1].codec, 'opus')
+
+// 一台机器上常同时装着 pip 的旧版与 brew 的新版。旧版在 YouTube 改版后会拿到被限流的直链，
+// 所以要按版本号挑最新的那个，而不是「PATH 上先找到的那个」。
+assert.ok(compareVersions('2026.08.19', '2025.10.14') > 0)
+assert.ok(compareVersions('2025.10.14', '2026.08.19') < 0)
+assert.equal(compareVersions('2025.10.14', '2025.10.14'), 0)
+// 必须按数字比，不能按字符串比：'08' < '10' 才算对
+assert.ok(compareVersions('2026.08.19', '2026.10.01') < 0)
+assert.ok(compareVersions('2026.8.19', '2026.08.19') === 0)
+// nightly 多一段，应排在正式版之后
+assert.ok(compareVersions('2026.08.19.232000', '2026.08.19') > 0)
+
+assert.equal(
+  pickNewest([
+    { path: '/Users/x/Library/Python/3.9/bin/yt-dlp', version: '2025.10.14' },
+    { path: '/opt/homebrew/bin/yt-dlp', version: '2026.08.19' }
+  ]).path,
+  '/opt/homebrew/bin/yt-dlp'
+)
+assert.equal(pickNewest([{ path: 'only', version: '2025.01.01' }]).path, 'only')
+assert.equal(pickNewest([]), null)
+assert.equal(pickNewest(undefined), null)
 
 // ---- 3. 匹配打分 ----
 assert.equal(scoreMatch({ name: '夜曲', artists: ['周杰伦'], duration: 227 }, { title: '夜曲', artists: ['周杰伦'], duration: 227 }), 8)

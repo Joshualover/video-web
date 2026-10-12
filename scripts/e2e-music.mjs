@@ -234,7 +234,17 @@ try {
     )
     expect(stream.status === 200, `取流失败：${stream.data.error || stream.status}`)
     expect((stream.data.streams || []).length > 0, 'yt-dlp 没有返回音频流')
-    expect(/^\/api\/music\/proxy\?url=/.test(stream.data.streams[0].playUrl), 'playUrl 不是本站代理地址')
+    const playUrl = stream.data.streams[0].playUrl
+    expect(/^\/api\/music\/proxy\?url=/.test(playUrl), 'playUrl 不是本站代理地址')
+    // 关键一步：真的去上游把音频拉回来。
+    // 只看「解析出了地址」是不够的 —— 出现过「解析成功、但上游按 Range 拒流」的情况，
+    // 界面上表现为播一小段就停，而这一步能直接抓到。
+    const media = await fetch(BASE + playUrl, { headers: { Range: 'bytes=0-65535' } })
+    expect(media.status === 206 || media.status === 200, `拉取音频失败：HTTP ${media.status}`)
+    expect(/audio|video|octet-stream/.test(media.headers.get('content-type') || ''), 'Content-Type 不是媒体类型')
+    const chunk = Buffer.from(await media.arrayBuffer())
+    expect(chunk.length > 0, '音频响应体为空')
+    console.log('     音频分片: ' + chunk.length + ' 字节，HTTP ' + media.status)
   }, { optional: true })
 
   await step('两趟搜索：slow=exclude 只走快源且不含慢音源', async () => {

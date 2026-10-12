@@ -80,33 +80,46 @@ npm start
 已存在的真实环境变量优先，不会被 `.env` 覆盖。
 代理只影响服务端出网；浏览器始终只跟本站说话（音频也走 `/api/music/proxy`）。
 
-### 代理出口 IP 会决定 YouTube 能不能整首播完
+### yt-dlp 的版本决定 YouTube 能不能整首播完
 
-这一点很容易被误判成「代码有 bug」，所以单独说明。实测（2026-10，数据中心代理出口）：
+这是**最容易误判成「代码有 bug」**的一处，把实测过程记在这里。
 
-| 请求 | 结果 |
-| --- | --- |
-| `Range: bytes=0-1048575`（1 MiB） | 206，正常返回 |
-| `Range: bytes=1048576-2097151`（往后挪 1 MiB） | **403**（`server: gvs 1.0`，YouTube 自己拒的） |
-| 换一条**全新解出来**的直链，直接从 1 MiB 处取 | 仍然 403 |
+**症状**：能搜到、能开始播，一小段（约 1 分钟）之后就停，服务端返回 502。
+直接量一下就知道是上游在拒绝：
 
-也就是说：YouTube 对「没解出 `n` 签名」的直链按 IP 限流，只给文件开头那一小段，
-后面的 Range 一律 403 —— 换 URL、换路由、换 yt-dlp 参数都没用（实测 yt-dlp 自己下载
-也只能拿到 ~500KB）。**这是出口 IP 信誉问题**，不是本项目能绕过的。
+| 请求同一条直链 | 旧版 yt-dlp (2025.10.14) | 新版 yt-dlp (2026.08.19) |
+| --- | --- | --- |
+| `Range: bytes=0-1048575` | 206 | 206 |
+| `Range: bytes=1048576-2097151` | **403** | 206 |
+| 换一条全新解出的直链，直接从 1 MiB 处取 | 仍然 403 | 206 |
 
-要整首播完，只有两条路：
-1. 换一个「干净」的出口（住宅 IP 通常可以）；
-2. 升级 yt-dlp 到支持 `--js-runtimes` 的版本（本项目实测的 2025.10.14 还不支持）并装 deno，
-   让它解出 `n` 签名拿到不限流的地址。
+403 来自 `server: gvs 1.0`（YouTube 的媒体服务器），换 URL、换路由、换请求头都没用；
+连 yt-dlp 自己下载也只能拿到 ~500KB。**根因是旧版 yt-dlp 拿到的直链被 YouTube 限流**
+（新版客户端 / PO token 流程变了），升级之后就正常了。
 
-在此之前，JioSaavn 与 Apple 试听两条直连音源不受影响，可以正常放完。
+新版实测：连续 5 个 1 MiB 分片把 4.91 MB 整首拉完、0 次失败；浏览器里播 318 秒的曲子，
+seek 到 150 秒仍然正常播放，代理响应全是 206。
+
+所以：
+
+- **装一个较新的 yt-dlp**（`brew install yt-dlp` 或官方 release 二进制）。本项目的适配器会
+  把候选可执行文件都问一遍 `--version`，**自动选用版本最高的那个**，不需要手工指定 ——
+  但 `.env` 里的 `YTDLP_PATH` 若显式设了，就以它为准。
+- 新版默认就会去找 `deno`（`brew install yt-dlp` 会顺带把它装上）。**不要手工传 `--js-runtimes`**：
+  实测默认配置 4/4 都能整段播，显式指定反而偶发限流。
+  ⚠️ 但要保证**运行服务的那个进程**能在 `PATH` 里找到 `deno`（Homebrew 装在 `/opt/homebrew/bin`）——
+  PM2 / systemd / launchd 起服务时 `PATH` 往往很窄，必要时在启动配置里补上。
+- 取流时先不指定 player client（交给 yt-dlp 自己挑），失败才退回 `YTDLP_PLAYER_CLIENTS` 列表。
+
+仍旧建议保留 `VOD_HTTP_PROXY`：不配代理时 googlevideo 直接不可达。
+JioSaavn 与 Apple 试听两条直连音源与这些无关，始终可用。
 
 ## 环境变量
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `YTDLP_PATH` | 自动查找 | yt-dlp 可执行文件路径 |
-| `YTDLP_PLAYER_CLIENTS` | `android_vr,android,ios` | 依次尝试的 player client（YouTube 反爬变化时先调这里） |
+| `YTDLP_PLAYER_CLIENTS` | `android_vr,android,ios` | 默认 client 失败后依次尝试的 player client（YouTube 反爬变化时先调这里） |
 | `YTDLP_CONCURRENCY` | `2` | 同时运行的 yt-dlp 进程数上限 |
 | `MUSIC_SEARCH_SOURCES` | `6` | 一次聚合搜索最多并搜几个音源（1-20） |
 | `MUSIC_SEARCH_DEADLINE` | `15000` | 单次聚合搜索的硬截止（毫秒，2-40 秒） |
@@ -192,7 +205,7 @@ Piped / Invidious 的公开实例可用性波动很大（下线、被 YouTube �
 | 音源管理里 yt-dlp 显示「未安装」 | 服务端那台机器上没有 yt-dlp；装完点一次「测试」即可（见上文） |
 | yt-dlp 报 `The page needs to be reloaded` | 该 player client 被 YouTube 挡了，调 `YTDLP_PLAYER_CLIENTS` 换一组 |
 | yt-dlp 报 `HTTP Error 403` | 拿到了地址但媒体域不可达（国内直连 googlevideo 的典型表现）：配 `VOD_HTTP_PROXY` |
-| 能搜到、能开始播，**播一小段就停**（约 1 分钟） | 上游按 IP 限流，见上一节：换住宅出口，或改用 JioSaavn / Apple 试听 |
+| 能搜到、能开始播，**播一小段就停**（约 1 分钟） | 旧版 yt-dlp 拿到的直链被 YouTube 限流，见上文：升级 yt-dlp（适配器会自动选版本最高的那个） |
 | Piped 报 `SignInConfirmNotBotException` | 该实例的 IP 被 YouTube 判为机器人；换实例或改用 yt-dlp |
 | 搜索要 10 秒以上 | 目标是等 yt-dlp（它本来就是秒级到十几秒）；不需要 YouTube 结果就停用它 |
 | 播放报错 / 一直转圈 | 音源的直链有效期有限（YouTube 系通常几小时），重新点一次播放即可；仍不行就换一个音源 |

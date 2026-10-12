@@ -32,6 +32,10 @@ const PLAYER_CLIENTS = String(process.env.YTDLP_PLAYER_CLIENTS || '')
   .filter(Boolean)
 
 const CLIENTS = PLAYER_CLIENTS.length ? PLAYER_CLIENTS : DEFAULT_CLIENTS
+// 取流时依次尝试的 client。第一项是 null = 不传 --extractor-args，交给 yt-dlp 自己挑：
+// 新版 yt-dlp 的默认组合能拿到**不被限流**的直链（实测 4/4 可整段播），
+// 而写死 android_vr 拿到的是只给前 1MiB 的限流地址。默认失败才退回显式列表。
+const CLIENT_ATTEMPTS = [null, ...CLIENTS]
 // 搜索结果上限：ytsearch 的 N 越大越慢
 const MAX_LIMIT = 30
 const SEARCH_TIMEOUT = 30000
@@ -67,9 +71,7 @@ function release() {
 }
 
 function candidatePaths() {
-  const out = []
-  if (process.env.YTDLP_PATH) out.push(process.env.YTDLP_PATH)
-  out.push('yt-dlp')
+  const out = ['yt-dlp']
   const home = os.homedir()
   out.push(
     '/opt/homebrew/bin/yt-dlp',
@@ -100,8 +102,36 @@ function runFile(binary, args, { timeout, encoding = 'utf8' } = {}) {
   })
 }
 
-// 找可执行文件：YTDLP_PATH > PATH > 常见安装位置。成功结果常驻缓存，失败只缓存 1 分钟
-// （用户装完 yt-dlp 不必重启服务）。
+function versionParts(text) {
+  return String(text || '')
+    .split(/[.\-+_]/)
+    .map((part) => Number.parseInt(part, 10))
+    .map((value) => (Number.isFinite(value) ? value : 0))
+}
+
+export function compareVersions(a, b) {
+  const left = versionParts(a)
+  const right = versionParts(b)
+  const length = Math.max(left.length, right.length)
+  for (let i = 0; i < length; i += 1) {
+    const diff = (left[i] || 0) - (right[i] || 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+// 同一个机器上常常同时存在好几个 yt-dlp（pip 装的旧版、brew 装的新版……），
+// 而旧版在 YouTube 改版后会拿到被限流的直链。所以这里不是「取第一个能找到的」，
+// 而是把能跑的都问一遍 --version，挑版本号最大的 —— 这个场景里「新」基本等于「能用」。
+export function pickNewest(list) {
+  return (Array.isArray(list) ? list : []).reduce(
+    (best, item) => (!best || compareVersions(item.version, best.version) > 0 ? item : best),
+    null
+  )
+}
+
+// 找可执行文件：YTDLP_PATH（显式指定，以它为准）> PATH 与常见安装位置里版本最高的那个。
+// 成功结果常驻缓存，失败只缓存 1 分钟（用户装完 yt-dlp 不必重启服务）。
 export async function resolveBinary() {
   if (binaryCache) {
     const ttl = binaryCache.path ? Number.POSITIVE_INFINITY : 60 * 1000
@@ -110,13 +140,23 @@ export async function resolveBinary() {
       throw new Error(binaryCache.error)
     }
   }
-  for (const candidate of candidatePaths()) {
+  const explicit = String(process.env.YTDLP_PATH || '').trim()
+  const candidates = explicit ? [explicit] : candidatePaths()
+  const probed = []
+  for (const candidate of candidates) {
     if (candidate.includes('/') && !existsSync(candidate)) continue
     const result = await runFile(candidate, ['--version'], { timeout: VERSION_TIMEOUT })
     if (!result.code && result.stdout.trim()) {
-      binaryCache = { path: candidate, version: result.stdout.trim().split('\n')[0], at: Date.now() }
-      return binaryCache
+      probed.push({ path: candidate, version: result.stdout.trim().split('\n')[0] })
     }
+  }
+  const best = explicit ? probed[0] : pickNewest(probed)
+  if (best) {
+    if (probed.length > 1) {
+      console.log(`[music] yt-dlp 有 ${probed.length} 个，选用版本最高的：${best.path} (${best.version})`)
+    }
+    binaryCache = { ...best, at: Date.now() }
+    return binaryCache
   }
   binaryCache = {
     error: '未安装 yt-dlp（安装后在音源管理页重新检测；也可用 YTDLP_PATH 指定可执行文件路径）',
@@ -266,20 +306,20 @@ export async function fetchStreams(api, { id } = {}) {
   const binary = await resolveBinary()
   const url = `https://www.youtube.com/watch?v=${videoId}`
   let lastError = ''
-  for (const client of CLIENTS) {
+  for (const client of CLIENT_ATTEMPTS) {
+    const label = client ? `client=${client}` : '默认 client'
     await acquire()
     let result
     try {
-      result = await runFile(
-        binary.path,
-        [...commonArgs(), '--extractor-args', `youtube:player_client=${client}`, '-J', url],
-        { timeout: STREAM_TIMEOUT }
-      )
+      const args = [...commonArgs()]
+      if (client) args.push('--extractor-args', `youtube:player_client=${client}`)
+      args.push('-J', url)
+      result = await runFile(binary.path, args, { timeout: STREAM_TIMEOUT })
     } finally {
       release()
     }
     if (result.code) {
-      lastError = describeFailure(result, `yt-dlp 取流失败（client=${client}）`)
+      lastError = describeFailure(result, `yt-dlp 取流失败（${label}）`)
       continue
     }
     let data
@@ -291,7 +331,7 @@ export async function fetchStreams(api, { id } = {}) {
     }
     const streams = pickAudioFormats(data?.formats)
     if (!streams.length) {
-      lastError = `yt-dlp 没有返回纯音频流（client=${client}）`
+      lastError = `yt-dlp 没有返回纯音频流（${label}）`
       continue
     }
     const value = {
