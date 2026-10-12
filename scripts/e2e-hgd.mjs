@@ -2,11 +2,13 @@
 //   node scripts/e2e-hgd.mjs            （默认 http://localhost:8787）
 //   BASE=http://localhost:5173 node scripts/e2e-hgd.mjs
 import { chromium } from 'playwright-core'
+import { findBrowser } from '../server/crawler.js'
 
 const BASE = process.env.BASE || 'http://localhost:8787'
-const EDGE = process.env.EDGE_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
+// 内核定位：EDGE_PATH / CHROME_PATH 覆盖 > 各平台常见路径（复用 crawler 的探测）> playwright 自带内核
+const BROWSER_PATH = process.env.EDGE_PATH || process.env.CHROME_PATH || findBrowser() || ''
 
-const browser = await chromium.launch({ executablePath: EDGE, headless: true })
+const browser = await chromium.launch(BROWSER_PATH ? { executablePath: BROWSER_PATH, headless: true } : { headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
 // 部署启用服务端会话（WEB_LOGIN）时，只伪造 localStorage 不够：先用 LOGIN_USER/LOGIN_PASS 换会话 Cookie
 const LOGIN_USER = process.env.LOGIN_USER || ''
