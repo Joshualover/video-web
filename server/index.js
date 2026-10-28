@@ -39,6 +39,7 @@ import { handleImageProxy } from './vod/image.js'
 import { doubanOptions, fetchDoubanHot } from './vod/douban.js'
 import { listConfigs, addConfig, updateConfig, removeConfig } from './vod/config-store.js'
 import { findBestLines } from './vod/best.js'
+import { filterRelevantResults, normalizeForMatch } from './vod/title-match.js'
 import musicRouter from './music/routes.js'
 import { checkSources as checkMusicSources, getSources as getMusicSources } from './music/sources.js'
 
@@ -678,7 +679,9 @@ app.get('/api/vod/search', assertProxyToken, async (req, res) => {
       targets.map(async (source) => {
         const data = await loadList(source, { wd, page: 1 })
         markHealth(source.id, true)
-        return { source, list: data.list }
+        // 相关性过滤（参考 LibreTV）：部分 CMS 的 wd 检索是模糊全库/推荐位凑数，
+        // 不过滤的话「咒术回战」会混进一堆名称不含该词的影片，且坏结果会吃掉 perSource 名额
+        return { source, list: filterRelevantResults(data.list, wd) }
       })
     )
 
@@ -722,6 +725,17 @@ app.get('/api/vod/search', assertProxyToken, async (req, res) => {
       }
       if (results.length >= limit) break
     }
+    // 精确命中优先（参考 LibreTV 的 aggregateOutcomes）：全等 > 前缀 > 包含，
+    // 同级再按「收录该片的源数」降序——聚合搜索里多源同片本身就是热度信号。
+    // 稳定排序，同权重保持源遍历顺序。
+    const nWd = normalizeForMatch(wd)
+    const rank = (name) => {
+      const n = normalizeForMatch(name)
+      if (n === nWd) return 0
+      if (n.startsWith(nWd)) return 1
+      return 2
+    }
+    results.sort((a, b) => rank(a.name) - rank(b.name) || b.sources.length - a.sources.length)
     res.json({ wd, total: results.length, list: results })
   } catch (err) {
     vodError(res, err, '搜索失败')

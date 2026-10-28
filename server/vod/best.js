@@ -3,22 +3,14 @@
 import { getSources, sourcesWithHealth, spreadByGroup, activeSources, rankSources, mapLimit } from './sources.js'
 import { loadList, loadDetail } from './query.js'
 import { probeMediaUrl } from './hls.js'
+import { titleMatch } from './title-match.js'
 
 const CACHE_TTL = 10 * 60 * 1000
 const cache = new Map()
 
-function norm(text) {
-  return String(text || '')
-    .toLowerCase()
-    .replace(/[\s\-_:：·・,，.。!！?？()（）[\]【】"“”'’]/g, '')
-}
-
-function titleMatch(a, b) {
-  const na = norm(a)
-  const nb = norm(b)
-  if (!na || !nb) return false
-  return na.includes(nb) || nb.includes(na)
-}
+// 同名判定收敛到 title-match.js（与搜索相关性同一套语义）：
+// 归一化去全部 Unicode 标点，且认「庆余年2 ↔ 庆余年 第二季」这类季数别名；
+// 仍是双向互为子串，原「结果名比查询长/带副标题也算同名」的行为保留。
 
 // 采集源对「带季数/括号后缀的长标题」支持很差（如「庆余年 第一季」可能什么都搜不到），
 // 所以额外用一个去掉季数的短标题再搜一遍，结果再统一做片名匹配。
