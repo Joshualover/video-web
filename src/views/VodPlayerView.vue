@@ -18,6 +18,7 @@ import {
   Zap
 } from 'lucide-vue-next'
 import { vodApi } from '../lib/vod'
+import { resolveSkipRange, crossedEnding, inOpening } from '../lib/skip-marks'
 import { usePlayerStore } from '../stores/player'
 import { useVodStore } from '../stores/vod'
 import { useUiStore } from '../stores/ui'
@@ -152,6 +153,10 @@ function initPlayer() {
     clearStallWatch()
   })
   player.on('loadeddata', clearStallWatch)
+  // seek 后拉平「上一次采样」：拖动/续播跳变不该被当成连续步进（跳过片尾判定用）
+  player.on('seeked', () => {
+    skipPrev = player && !player.isDisposed() ? player.currentTime() : NaN
+  })
   player.on('waiting', () => {
     playing.value = false
   })
@@ -189,8 +194,7 @@ function initPlayer() {
 async function applySource() {
   const ep = currentEpisode.value
   if (!player || player.isDisposed() || !ep) return
-  skipApplied = false
-  outroFired = false
+  resetSkipState()
   const token = ++applyToken
   playError.value = ''
   triedProxy = false
@@ -376,40 +380,57 @@ function formatClock(seconds) {
   return m ? `${m}:${String(s).padStart(2, '0')}` : `${s} 秒`
 }
 
-// 播放中自动跳过：片头直接 seek 过去，片尾提前跳下一集
+// 存储上下文：有片名按剧名记忆（换源/换集共享），无片名退回 site|id
+const skipCtx = () => ({ title: detail.value?.name || '', site: favSite(), id: favId() })
+
+// 上一次 timeupdate 采样：片尾自动结束只认「连续小步越过」，
+// 拖动进度条（大跳变）不触发；seeked 事件里拉平基准防止 seek 被当成步进。
+let skipPrev = NaN
+
+function resetSkipState() {
+  skipApplied = false
+  outroFired = false
+  skipPrev = NaN
+}
+
+// 播放中自动跳过：片头（播上来才跳）直接 seek 过去，
+// 片尾只在连续播放越过起点时提前跳下一集（拖动回看结尾不被切走）。
 function applySkip() {
   if (!player || player.isDisposed() || !skip.value.enable) return
   const duration = player.duration()
   const t = player.currentTime()
   if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(t)) return
-  const intro = Number(skip.value.intro) || 0
-  const outro = Number(skip.value.outro) || 0
-  if (intro > 1 && t > 0.3 && t < intro && !skipApplied) {
+  // 读取侧按本集时长裁剪（标记跨集共享，各集时长可能不同）
+  const range = resolveSkipRange(skip.value, duration)
+  const prev = skipPrev
+  skipPrev = t
+
+  if (range.intro > 0 && !skipApplied && inOpening(prev, t, range.intro)) {
     skipApplied = true
     try {
-      player.currentTime(intro)
-      uiStore.toast(`已跳过片头 ${formatClock(intro)}`, 'success')
+      player.currentTime(range.intro)
+      skipPrev = range.intro
+      uiStore.toast(`已跳过片头 ${formatClock(range.intro)}`, 'success')
     } catch {
       // 忽略 seek 失败
     }
     return
   }
-  if (outro > 0 && !outroFired && duration - t <= outro && duration - t > 0.3) {
+  if (range.outroStart > 0 && !outroFired && crossedEnding(prev, t, range.outroStart)) {
     outroFired = true
     playNext()
   }
 }
 
 function toggleSkip() {
-  skip.value = vodStore.saveSkipConfig(favSite(), favId(), { enable: !skip.value.enable })
-  skipApplied = false
-  outroFired = false
+  skip.value = vodStore.saveSkipConfig({ enable: !skip.value.enable }, skipCtx())
+  resetSkipState()
   uiStore.toast(skip.value.enable ? '已开启跳过片头片尾' : '已关闭跳过片头片尾', 'success')
 }
 
 function setSkipField(field, event) {
   const value = Math.max(Math.floor(Number(event.target.value) || 0), 0)
-  skip.value = vodStore.saveSkipConfig(favSite(), favId(), { [field]: value })
+  skip.value = vodStore.saveSkipConfig({ [field]: value }, skipCtx())
   if (field === 'intro') skipApplied = false
   if (field === 'outro') outroFired = false
 }
@@ -420,9 +441,10 @@ function markIntro() {
     uiStore.toast('先播放到片头结束的位置再点', 'warning')
     return
   }
-  skip.value = vodStore.saveSkipConfig(favSite(), favId(), { intro: t, enable: true })
+  skip.value = vodStore.saveSkipConfig({ intro: t, enable: true }, skipCtx())
   skipApplied = false
-  uiStore.toast(`片头已记为 ${formatClock(t)}`, 'success')
+  skipPrev = t
+  uiStore.toast(`片头已记为 ${formatClock(t)}（按片名记住，换源换集通用）`, 'success')
 }
 
 function markOutro() {
@@ -433,9 +455,10 @@ function markOutro() {
     return
   }
   const outro = Math.max(Math.floor(duration - t), 1)
-  skip.value = vodStore.saveSkipConfig(favSite(), favId(), { outro, enable: true })
+  skip.value = vodStore.saveSkipConfig({ outro, enable: true }, skipCtx())
   outroFired = false
-  uiStore.toast(`片尾已记为最后 ${formatClock(outro)}`, 'success')
+  skipPrev = t
+  uiStore.toast(`片尾已记为最后 ${formatClock(outro)}（按片名记住，换源换集通用）`, 'success')
 }
 
 function toggleFullscreen() {
@@ -470,12 +493,14 @@ async function load() {
   bestError.value = ''
   bestCacheAt.value = 0
   autoTried = false
-  skip.value = vodStore.getSkipConfig(favSite(), favId())
+  resetSkipState()
   try {
     const data = await vodApi.detail(String(route.params.site), String(route.params.id))
     if (token !== loadToken) return
     detail.value = data.detail
     siteName.value = data.siteName || ''
+    // 跳过标记要在拿到片名后读（按剧名记忆，换源/换集共享同一份标记）
+    skip.value = vodStore.getSkipConfig(skipCtx())
     // 线路：URL 参数优先；缺省用服务端 preferredLine（含 m3u8 的线路优先，参考 LibreTV）
     const wantLine =
       route.query.line !== undefined ? Number(route.query.line) : Number(detail.value.preferredLine) || 0

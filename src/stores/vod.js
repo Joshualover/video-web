@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { loadJson, saveJson } from '../lib/storage'
 import { vodApi, titleKey, normalizeTitle } from '../lib/vod'
+import { skipMarkKey } from '../lib/skip-marks'
 
 const SITE_KEY = 'vodActiveSite'
 const RECENTS_KEY = 'vodRecents'
@@ -331,16 +332,29 @@ export const useVodStore = defineStore('vod', {
       return best
     },
 
-    getSkipConfig(site, id) {
-      const item = this.skipConfigs[`${site}|${id}`]
-      return item && typeof item === 'object'
-        ? { enable: Boolean(item.enable), intro: Number(item.intro) || 0, outro: Number(item.outro) || 0 }
-        : { enable: false, intro: 0, outro: 0 }
+    // 跳过标记：按**归一化剧名**记忆（同剧各集、换源后的同名资源共享），
+    // 无剧名时退回 site|id 兜底。旧数据仍按 site|id 存，读取时向后兼容命中。
+    getSkipConfig(ctx = {}) {
+      const { title = '', site = '', id = '' } = ctx
+      const key = skipMarkKey(title, site, id)
+      const raw = this.skipConfigs[key]
+      if (raw && typeof raw === 'object') {
+        return { enable: Boolean(raw.enable), intro: Number(raw.intro) || 0, outro: Number(raw.outro) || 0 }
+      }
+      // 向后兼容：有剧名但剧名键还没写过时，尝试旧的 site|id 键
+      if (title) {
+        const legacy = this.skipConfigs[`${site}|${id}`]
+        if (legacy && typeof legacy === 'object') {
+          return { enable: Boolean(legacy.enable), intro: Number(legacy.intro) || 0, outro: Number(legacy.outro) || 0 }
+        }
+      }
+      return { enable: false, intro: 0, outro: 0 }
     },
 
-    saveSkipConfig(site, id, patch = {}) {
-      const key = `${site}|${id}`
-      const next = { ...this.getSkipConfig(site, id), ...patch }
+    saveSkipConfig(patch = {}, ctx = {}) {
+      const { title = '', site = '', id = '' } = ctx
+      const key = skipMarkKey(title, site, id)
+      const next = { ...this.getSkipConfig(ctx), ...patch }
       this.skipConfigs = { ...this.skipConfigs, [key]: next }
       saveJson(SKIP_KEY, this.skipConfigs)
       return next
