@@ -41,6 +41,7 @@ import { listConfigs, addConfig, updateConfig, removeConfig } from './vod/config
 import { findBestLines } from './vod/best.js'
 import { filterRelevantResults, normalizeForMatch } from './vod/title-match.js'
 import { probeQualityBatch } from './vod/quality-probe.js'
+import vodApiRouter from './vod/vod-api.js'
 import musicRouter from './music/routes.js'
 import { checkSources as checkMusicSources, getSources as getMusicSources } from './music/sources.js'
 
@@ -129,7 +130,7 @@ const RATE_LIMIT_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_PER_MIN ?? 600
 const RATE_LIMIT_HEAVY_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_HEAVY_PER_MIN ?? 30) || 0, 0)
 // 登录单独一档：防止拿口令爆破（WEB_LOGIN 场景）
 const RATE_LIMIT_LOGIN_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_LOGIN_PER_MIN ?? 10) || 0, 0)
-const HEAVY_ROUTE_RE = /^\/api\/(vod\/search|vod\/best|vod\/quality|site-search|site-crawl|music\/search|music\/match)/
+const HEAVY_ROUTE_RE = /^\/api\/(vod\/search|vod\/best|vod\/quality|site-search|site-crawl|music\/search|music\/match|search|source-list)/
 const RATE_LIMITS = {
   l: RATE_LIMIT_LOGIN_PER_MIN,
   h: RATE_LIMIT_HEAVY_PER_MIN,
@@ -778,6 +779,10 @@ if (MUSIC_WARMUP) {
 }
 
 app.use('/api/music', assertProxyToken, musicRouter)
+
+// ---- LibreTV 风格顶层别名（/api/search /api/detail /api/status /api/hot-list
+//      /api/bangumi/calendar /api/source-list），供第三方客户端直连 ----
+app.use('/api', assertProxyToken, vodApiRouter)
 
 // ---- 站内搜索 / 抓取任务（两阶段） ----
 const crawlTasks = new Map()
