@@ -9,7 +9,7 @@
     "dev:web": "vite",
     "dev:server": "node server/index.js",
     "build": "vite build",
-    "test": "node scripts/test-m3u.mjs && node scripts/test-music.mjs && node scripts/test-hls.mjs && node scripts/test-env.mjs && node scripts/test-title-match.mjs && node scripts/test-detail-line.mjs && node scripts/test-skip-marks.mjs",
+    "test": "node scripts/test-m3u.mjs && node scripts/test-music.mjs && node scripts/test-hls.mjs && node scripts/test-env.mjs && node scripts/test-title-match.mjs && node scripts/test-detail-line.mjs && node scripts/test-skip-marks.mjs && node scripts/test-playback-recovery.mjs",
     "start": "node server/index.js",
     "preview": "vite preview"
   },

@@ -19,6 +19,7 @@ import {
 } from 'lucide-vue-next'
 import { vodApi } from '../lib/vod'
 import { resolveSkipRange, crossedEnding, inOpening } from '../lib/skip-marks'
+import { PlaybackRecovery } from '../lib/playback-recovery'
 import { usePlayerStore } from '../stores/player'
 import { useVodStore } from '../stores/vod'
 import { useUiStore } from '../stores/ui'
@@ -49,7 +50,9 @@ const showSkip = ref(false)
 const skip = ref({ enable: false, intro: 0, outro: 0 })
 
 let player = null
-let triedProxy = false
+let recovery = null // 每集全新的失败恢复决策器（见 src/lib/playback-recovery.js）
+let activeInfo = null // 当前剧集解析出的 {src(代理/服务端解析), direct(直连), type}
+let activeRoute = 'proxy' // 当前使用的传输路由：proxy=info.src，direct=info.direct
 let applyToken = 0
 let loadToken = 0
 let autoTried = false
@@ -63,6 +66,8 @@ const triedSources = new Set()
 
 // 源站清单能拉到、但分片被拒（502/403）时 VHS 会无限重试且不派发 error，这里起个兜底计时器
 const STALL_MS = 15000
+// 起播后的卡顿兜底：waiting 超过该时长仍未恢复，喂给决策器按一次网络失败处理
+const PLAY_STALL_MS = 20000
 
 function clearStallWatch() {
   if (stallTimer) {
@@ -77,8 +82,17 @@ function armStallWatch() {
     stallTimer = null
     if (!player || player.isDisposed()) return
     if (player.readyState() >= 2 || player.currentTime() > 0.5) return
-    handleError(true)
+    handleFailure('stall')
   }, STALL_MS)
+}
+
+function armPlayStallWatch() {
+  clearStallWatch()
+  stallTimer = setTimeout(() => {
+    stallTimer = null
+    if (!player || player.isDisposed() || !playing.value) return
+    handleFailure('stall')
+  }, PLAY_STALL_MS)
 }
 
 const favSite = () => String(route.params.site)
@@ -151,16 +165,25 @@ function initPlayer() {
     playing.value = true
     playError.value = ''
     clearStallWatch()
+    recovery?.markHealthy()
   })
-  player.on('loadeddata', clearStallWatch)
+  player.on('loadeddata', () => {
+    clearStallWatch()
+    recovery?.markHealthy()
+  })
   // seek 后拉平「上一次采样」：拖动/续播跳变不该被当成连续步进（跳过片尾判定用）
   player.on('seeked', () => {
     skipPrev = player && !player.isDisposed() ? player.currentTime() : NaN
   })
   player.on('waiting', () => {
     playing.value = false
+    // 播放中途卡住（缓冲耗尽）没有 error 事件，装一个计时器把「迟迟不恢复」喂给决策器
+    if (player && !player.isDisposed() && player.currentTime() > 0.5) armPlayStallWatch()
   })
-  player.on('error', () => handleError())
+  player.on('error', () => {
+    const err = player?.error?.()
+    handleFailure(err ? { code: err.code, message: err.message } : null)
+  })
   player.on('ended', () => {
     vodStore.updateProgress(favSite(), favId(), player.duration(), player.duration())
     playNext()
@@ -197,57 +220,90 @@ async function applySource() {
   resetSkipState()
   const token = ++applyToken
   playError.value = ''
-  triedProxy = false
+  // 每集全新的恢复决策器：上一集的失败计数不该带到这一集
+  recovery?.dispose()
+  recovery = new PlaybackRecovery()
+  activeInfo = null
+  activeRoute = 'proxy'
   playLoading.value = true
   try {
     const info = await getPlaySrc(ep)
     if (token !== applyToken || !player || player.isDisposed()) return
-    player.src({ src: info.src, type: info.type })
-    const resumeAt = Number(route.query.t) || 0
-    if (resumeAt > 10) {
-      player.one('loadedmetadata', () => {
-        try {
-          player.currentTime(resumeAt)
-        } catch {
-          // 忽略
-        }
-      })
-    }
-    player.play().catch(() => {})
-    armStallWatch()
+    activeInfo = info
+    applyRoute('proxy')
   } catch {
     if (token !== applyToken || !player || player.isDisposed()) return
-    // 解析/代理失败时退回直连（只对真正的媒体地址做）
+    // 解析失败时退回直连（只对真正的媒体地址做）；没有可直连的地址才走换源
     if (canPlayDirectly(ep.url)) {
-      player.src({ src: ep.url, type: mediaType(ep.url) })
-      player.play().catch(() => {})
-      armStallWatch()
+      activeInfo = { src: ep.url, direct: ep.url, type: mediaType(ep.url) }
+      applyRoute('direct')
       return
     }
-    playing.value = false
-    playError.value = '播放失败：源站不可用、已下架或存在跨域限制'
-    void autoSwitchOnFail()
+    failToSwitch('播放失败：源站不可用、已下架或存在跨域限制')
   } finally {
     if (token === applyToken) playLoading.value = false
   }
 }
 
-function handleError(fromStall = false) {
+// 按路由加载当前剧集地址：proxy=服务端代理（解 Referer/跨域/网页播放页），direct=浏览器直连
+function applyRoute(route_) {
+  const info = activeInfo
+  if (!player || player.isDisposed() || !info) return
+  const token = applyToken
+  activeRoute = route_
+  const src = route_ === 'direct' ? info.direct : info.src
+  player.src({ src, type: info.type })
+  const resumeAt = Number(route.query.t) || 0
+  if (resumeAt > 10) {
+    player.one('loadedmetadata', () => {
+      try {
+        player.currentTime(resumeAt)
+      } catch {
+        // 忽略
+      }
+    })
+  }
+  player.play().catch(() => {})
+  if (token === applyToken) armStallWatch()
+  playLoading.value = false
+}
+
+// video.js error / stall → 决策器 → 执行决策
+// err 可以是 MediaError 形态 {code, message}，或 'stall'（计时器兜底）
+function handleFailure(err) {
   clearStallWatch()
-  if (!player || player.isDisposed()) return
+  if (!player || player.isDisposed() || !recovery) return
   const ep = currentEpisode.value
   if (!ep) return
-  // 真·error 事件时才退回直连（部分源允许跨域）；卡死说明地址已解析成功、是源站拒了分片，直连没意义，直接换源
-  if (!fromStall && !triedProxy && canPlayDirectly(ep.url)) {
-    triedProxy = true
-    // 代理失败时退回直连（部分源本身允许跨域）
-    player.src({ src: ep.url, type: mediaType(ep.url) })
-    player.play().catch(() => {})
-    armStallWatch()
+  const decision =
+    err === 'stall' ? recovery.onNetworkFailure(Date.now()) : recovery.onPlayerError(err, Date.now())
+
+  if (decision.action === 'ignore') return
+  if (decision.action === 'switch-source') {
+    failToSwitch('播放失败：源站不可用、已下架或存在跨域限制')
     return
   }
+  if (decision.action === 'retry') {
+    recovery.schedule(() => {
+      if (player && !player.isDisposed() && ep === currentEpisode.value) {
+        // route=switch：在代理↔直连之间换一次；只有一条路可走时按原路重载
+        let next = activeRoute
+        if (decision.route === 'switch') {
+          const other = activeRoute === 'proxy' ? 'direct' : 'proxy'
+          const otherSrc = other === 'direct' ? activeInfo?.direct : activeInfo?.src
+          if (other === 'direct' && !canPlayDirectly(ep.url)) next = activeRoute
+          else if (otherSrc) next = other
+        }
+        applyRoute(next)
+      }
+    }, decision.delayMs)
+  }
+}
+
+// 重试预算耗尽/硬失败：亮错误并尝试自动换源（沿用原的一次性 autoTried + triedSources 防打转）
+function failToSwitch(message) {
   playing.value = false
-  playError.value = '播放失败：源站不可用、已下架或存在跨域限制'
+  playError.value = message
   void autoSwitchOnFail()
 }
 
@@ -590,6 +646,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearStallWatch()
+  recovery?.dispose()
+  recovery = null
   if (player) {
     player.dispose()
     player = null
