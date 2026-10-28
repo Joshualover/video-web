@@ -40,6 +40,7 @@ import { doubanOptions, fetchDoubanHot } from './vod/douban.js'
 import { listConfigs, addConfig, updateConfig, removeConfig } from './vod/config-store.js'
 import { findBestLines } from './vod/best.js'
 import { filterRelevantResults, normalizeForMatch } from './vod/title-match.js'
+import { probeQualityBatch } from './vod/quality-probe.js'
 import musicRouter from './music/routes.js'
 import { checkSources as checkMusicSources, getSources as getMusicSources } from './music/sources.js'
 
@@ -128,7 +129,7 @@ const RATE_LIMIT_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_PER_MIN ?? 600
 const RATE_LIMIT_HEAVY_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_HEAVY_PER_MIN ?? 30) || 0, 0)
 // 登录单独一档：防止拿口令爆破（WEB_LOGIN 场景）
 const RATE_LIMIT_LOGIN_PER_MIN = Math.max(Number(process.env.RATE_LIMIT_LOGIN_PER_MIN ?? 10) || 0, 0)
-const HEAVY_ROUTE_RE = /^\/api\/(vod\/search|vod\/best|site-search|site-crawl|music\/search|music\/match)/
+const HEAVY_ROUTE_RE = /^\/api\/(vod\/search|vod\/best|vod\/quality|site-search|site-crawl|music\/search|music\/match)/
 const RATE_LIMITS = {
   l: RATE_LIMIT_LOGIN_PER_MIN,
   h: RATE_LIMIT_HEAVY_PER_MIN,
@@ -603,6 +604,20 @@ app.get('/api/vod/best', assertProxyToken, async (req, res) => {
     res.json(data)
   } catch (err) {
     vodError(res, err, '选路失败')
+  }
+})
+
+// 画质探测（批量）：入参是选路/详情给出的播放地址，服务端拉清单头部解析分辨率。
+// 每条 URL 一次出网（受 host 闸门与缓存约束），与 best/search 同档按「放大型」限流。
+app.post('/api/vod/quality', assertProxyToken, async (req, res) => {
+  const urls = Array.isArray(req.body?.urls) ? req.body.urls : []
+  const list = urls.map((u) => String(u || '').trim()).filter((u) => /^https?:\/\//i.test(u))
+  if (!list.length) return res.status(400).json({ error: '缺少 urls 参数' })
+  try {
+    const results = await probeQualityBatch(list)
+    res.json({ results })
+  } catch (err) {
+    vodError(res, err, '画质探测失败')
   }
 })
 

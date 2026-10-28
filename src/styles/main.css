@@ -3868,6 +3868,18 @@ input::placeholder {
   flex-shrink: 0;
 }
 
+/* 画质徽标：实测到分辨率才显示档位，「未知」灰显，失败不占位 */
+.vod-quality-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--teal);
+  border: 1px solid var(--teal);
+  white-space: nowrap;
+}
+
 .vod-detail-info .btn {
   margin-right: 8px;
   margin-top: 4px;

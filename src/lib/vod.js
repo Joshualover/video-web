@@ -39,6 +39,8 @@ export const vodApi = {
   detail: (site, id) => apiGet('/api/vod/detail', { site, id }),
   play: (url) => apiGet('/api/vod/play', { url }),
   best: (wd, opts = {}) => apiGet('/api/vod/best', { wd, ...opts }),
+  // 画质批量探测：入参为播放地址数组，返回 results（url + status/height/label）
+  quality: (urls) => apiSend('/api/vod/quality', { urls }, 'POST'),
   configs: () => apiGet('/api/vod/configs'),
   addConfig: (body) => apiSend('/api/vod/configs', body),
   updateConfig: (id, body) => apiSend(`/api/vod/configs/${id}`, body, 'PUT'),

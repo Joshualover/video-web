@@ -15,6 +15,7 @@ import {
   Zap
 } from 'lucide-vue-next'
 import { vodApi, vodImage } from '../lib/vod'
+import { fetchQualities, qualityBadge } from '../lib/quality-ui'
 import { useVodStore } from '../stores/vod'
 
 const route = useRoute()
@@ -88,6 +89,7 @@ async function findBest(force = false) {
     bestList.value = cached.data.list || []
     bestCacheAt.value = cached.at
     bestError.value = bestList.value.length ? '' : '没有找到其他可用线路'
+    void loadQualities()
     return
   }
   bestLoading.value = true
@@ -99,11 +101,24 @@ async function findBest(force = false) {
     bestCacheAt.value = Date.now()
     vodStore.setBest(detail.value.name, detail.value.year, data)
     if (!bestList.value.length) bestError.value = '没有找到其他可用线路'
+    void loadQualities()
   } catch (err) {
     bestError.value = err.message || '选路失败'
   } finally {
     bestLoading.value = false
   }
+}
+
+// 画质徽标：bestList 到手后整批异步探测（服务端有缓存/闸门；失败静默，不阻塞面板）
+const qualities = ref({}) // episodeUrl -> { status, height?, label? }
+async function loadQualities() {
+  const urls = bestList.value.filter((i) => i.ok).map((i) => i.episodeUrl)
+  if (!urls.length) return
+  qualities.value = await fetchQualities(urls)
+}
+
+function qualityOf(item) {
+  return qualityBadge(qualities.value[item.episodeUrl])
 }
 
 function switchToSource(item) {
@@ -242,6 +257,7 @@ onMounted(load)
             <span class="vod-best-name">{{ item.siteName }}</span>
             <span class="vod-best-title">{{ item.name }}</span>
             <span class="vod-best-ep">{{ item.episodeName }}</span>
+            <span v-if="qualityOf(item)" class="vod-quality-badge">{{ qualityOf(item) }}</span>
             <span class="vod-best-latency">{{ item.ok ? item.latency + ' ms' : '不可用' }}</span>
           </button>
         </div>
