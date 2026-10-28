@@ -315,9 +315,14 @@ async function autoSwitchOnFail() {
 }
 
 function switchToSource(item) {
+  // 带上目标源的首选线路（best 列表项的 preferredLine，m3u8 线路优先）。
+  // 旧缓存没有该字段时干脆不传 line，让播放页 load() 用详情接口给出的 preferredLine 兜底
+  const query = { index: 0 }
+  const pl = Number(item.preferredLine)
+  if (Number.isFinite(pl) && pl > 0) query.line = pl
   router.replace({
     path: `/vod/play/${item.site}/${encodeURIComponent(item.id)}`,
-    query: { line: 0, index: 0 }
+    query
   })
 }
 
@@ -471,7 +476,10 @@ async function load() {
     if (token !== loadToken) return
     detail.value = data.detail
     siteName.value = data.siteName || ''
-    const line = Math.min(Math.max(Number(route.query.line) || 0, 0), Math.max(lines.value.length - 1, 0))
+    // 线路：URL 参数优先；缺省用服务端 preferredLine（含 m3u8 的线路优先，参考 LibreTV）
+    const wantLine =
+      route.query.line !== undefined ? Number(route.query.line) : Number(detail.value.preferredLine) || 0
+    const line = Math.min(Math.max(Number.isFinite(wantLine) ? wantLine : 0, 0), Math.max(lines.value.length - 1, 0))
     activeLine.value = line
     currentIndex.value = Math.min(
       Math.max(Number(route.query.index) || 0, 0),

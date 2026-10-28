@@ -50,6 +50,12 @@ const lines = computed(() => {
 
 const episodes = computed(() => lines.value[activeLine.value]?.episodes || [])
 
+// 线路下标夹到有效范围（服务端给的 preferredLine 理论上在范围内，防脏数据）
+function clampLine(index) {
+  const max = Math.max(lines.value.length - 1, 0)
+  return Math.min(Math.max(Number(index) || 0, 0), max)
+}
+
 function back() {
   if (window.history.length > 1) router.back()
   else router.push('/')
@@ -116,7 +122,8 @@ async function load() {
     if (token !== loadToken) return
     detail.value = data.detail
     siteName.value = data.siteName || ''
-    activeLine.value = 0
+    // 默认线路：服务端 preferredLine（含 m3u8 的线路优先），旧数据没有该字段时回退 0
+    activeLine.value = clampLine(Number(data.detail.preferredLine) || 0)
     bestList.value = []
     bestError.value = ''
     bestCacheAt.value = 0

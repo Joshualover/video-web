@@ -156,6 +156,7 @@ export function parsePlayUrl(play) {
 }
 
 export function normalizeVideo(v) {
+  const playUrl = parsePlayUrl(v?.vod_play_url)
   return {
     id: String(v?.vod_id ?? ''),
     name: String(v?.vod_name ?? ''),
@@ -173,8 +174,40 @@ export function normalizeVideo(v) {
     updatedAt: String(v?.vod_time ?? ''),
     content: String(v?.vod_content ?? v?.vod_blurb ?? '').replace(/<[^>]+>/g, '').trim(),
     playFrom: parsePlayFrom(v?.vod_play_from),
-    playUrl: parsePlayUrl(v?.vod_play_url)
+    playUrl,
+    preferredLine: pickPreferredLine(playUrl)
   }
+}
+
+// 多线路默认选「含 m3u8 的那条」（参考 LibreTV parseDetail）：
+// 采集站经常同时挂若干线路，排前面的常是需要专用解析的私有协议/网页播放页，
+// 直接播不了；含 .m3u8 的线路最可能开箱即用。没有任何 m3u8 线路时保持 0。
+export function pickPreferredLine(playUrl) {
+  if (!Array.isArray(playUrl)) return 0
+  const idx = playUrl.findIndex((line) =>
+    Array.isArray(line) && line.some((ep) => /\.m3u8(\?|#|$)/i.test(String(ep?.url || '')))
+  )
+  return idx >= 0 ? idx : 0
+}
+
+// 简介兜底提取 m3u8（参考 LibreTV extractM3u8FromText）：
+// 一部分源的列表/详情接口不回填 vod_play_url，但把播放地址藏在简介正文里。
+// 只认 `$https://…m3u8`（CMS 惯例用 $ 前缀）或裸 https … .m3u8 两种形态。
+export function extractM3u8FromContent(content) {
+  const text = String(content || '')
+  if (!text) return []
+  const withDollar = text.match(/\$(https?:\/\/[^"'$\s]+?\.m3u8)/g) || []
+  const bare = text.match(/(https?:\/\/[^"'\s<>]+?\.m3u8)/g) || []
+  const urls = [...withDollar.map((s) => s.slice(1)), ...bare].map(normalizePlayUrl)
+  const seen = new Set()
+  const out = []
+  for (const url of urls) {
+    if (!/^https?:\/\//i.test(url)) continue
+    if (seen.has(url)) continue
+    seen.add(url)
+    out.push({ name: `第${out.length + 1}集`, url })
+  }
+  return out
 }
 
 export async function fetchCategories(api, opts = {}) {
@@ -212,6 +245,16 @@ export async function fetchDetail(api, id, opts = {}) {
       const list = Array.isArray(data?.list) ? data.list : []
       const video = list.length ? normalizeVideo(list[0]) : null
       if (!video) continue
+      // 简介兜底：一部分源只把播放地址写在 vod_content 里，接口字段是空的
+      if (!video.playUrl.length) {
+        const rescued = extractM3u8FromContent(video.content)
+        if (rescued.length) {
+          video.playUrl = [rescued]
+          video.playFrom = video.playFrom.length ? video.playFrom : ['简介提取']
+          video.preferredLine = 0
+          return video
+        }
+      }
       if (video.playUrl.length) return video
       if (!fallback) fallback = video
     } catch (err) {

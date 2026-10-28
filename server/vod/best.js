@@ -66,11 +66,13 @@ export async function findBestLines({ wd, year = '', limit = 8, probe = true, ma
     unique.push(item)
   }
 
-  // 2) 并发取详情 + 探测首集延迟
+  // 2) 并发取详情 + 探测首集延迟（探测剧集取 preferredLine：m3u8 线路优先，
+  //    否则会把「其实能播、只是首线路是网页播放页」的源误判成延迟高/不可用）
   const probed = await mapLimit(unique.slice(0, limit * 4), 5, async (item) => {
     try {
       const detail = await loadDetail(item.source, item.video.id)
-      const episode = (detail?.playUrl || [])[0]?.[0]
+      const preferred = Math.max(Math.min(Number(detail?.preferredLine) || 0, (detail?.playUrl || []).length - 1), 0)
+      const episode = (detail?.playUrl || [])[preferred]?.[0] || (detail?.playUrl || [])[0]?.[0]
       if (!episode) return null
       const result = probe ? await probeMediaUrl(episode.url, { timeout: 6000 }) : { ok: true, latency: 0 }
       return {
@@ -83,6 +85,7 @@ export async function findBestLines({ wd, year = '', limit = 8, probe = true, ma
         year: detail.year,
         type: detail.type,
         remarks: detail.remarks,
+        preferredLine: detail.preferredLine ?? 0,
         episodeName: episode.name,
         episodeUrl: episode.url,
         ok: Boolean(result.ok),
