@@ -48,6 +48,19 @@
 
 > 影视数据来自第三方采集接口，本项目不存储、不转码、不传播任何内容；可用性取决于对应源站。仅供本地学习使用。
 
+### 第三方接口（LibreTV 风格顶层 API）
+
+按 [LibreTV](https://github.com/LibreSpark/LibreTV) 的接口契约实现了一层顶层别名（语义重写），第三方 LibreTV 客户端 / TVBox 壳可不改配置直连本站（同样受 `PROXY_TOKEN` / `BASIC_AUTH` / `WEB_LOGIN` 与限流约束）：
+
+| 端点 | 契约 |
+| --- | --- |
+| `POST /api/search` | `{ wd, sources: [{key,name,url}], filterAdult? }` → `{ list, failures }`；扇出并发 6，源地址逐条过出网校验，成人分类默认过滤，精确命中优先 |
+| `GET /api/detail?id=&source={json}` | → `{ episodes: [m3u8…], videoInfo }`（episodes 取首选 m3u8 线路） |
+| `GET /api/status` | `{ passwordRequired, verified, version, defaultSources… }`，供客户端 bootstrap |
+| `GET /api/hot-list?id=<榜单>` | 豆瓣五个周榜 + 百度热播剧（经 60s API 免 key，主实例失败自动回退官方实例；缓存 1 小时） |
+| `GET /api/bangumi/calendar` | Bangumi 每日追番日历，按星期 1-7 分组（缓存 30 分钟） |
+| `GET /api/source-list?url=<订阅>` | 订阅三格式自动识别：TVBox 配置 / LibreTV-SourceList / 接口目录；`csp_`/XML/txt 等 Web 端用不了的条目跳过并计入 `stats`（混用 `baseUrl` 与 `url` 明确报错，绝不静默丢一半） |
+
 ### 音乐（Spotube 音源）
 按 [Spotube](https://github.com/team-spotube/spotube) 的音源模型新增的「音乐」板块：搜索曲目 → 在线播放 → 管理音源。
 Spotube 把「曲目元数据」和「音频来源」拆成两个可插拔角色，音频源插件只实现

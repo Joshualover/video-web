@@ -25,7 +25,22 @@ LibreTV 是 AGPL 许可，**全部为语义重写**：只移植其规则、阈�
 - **起播/跟播预取（分段缓存）**：依赖 hls.js loader 替换，video.js + VHS 架构下无对应挂点；服务端分片缓存放大有界性风险，未做。
 - **SSRF / host-gate 的 DNS 侧**：本项目 `assertPublicTarget` 已覆盖且 2026-10 审核修过 IPv4-mapped 绕过，不重复。
 
-## 三、如何验证
+## 三、后续追加：LibreTV 风格顶层 API（`/api/*` 别名）
+
+按客户端契约实现（`server/vod/vod-api.js` 挂载于 index.js，全部过 assertProxyToken 与限流）：
+
+| 端点 | 说明 | 新增/复用 |
+| --- | --- | --- |
+| `POST /api/search` | `{wd, sources:[{key,name,url}], filterAdult?}` → `{list, failures}`；扇出并发 6（mapLimit），源地址逐条过 `assertPublicTarget`（含 169.254 元数据实测拒绝），成人关键词默认过滤 | 复用 `loadList` + `filterRelevantResults` |
+| `GET /api/detail?id=&source={json}` | → `{episodes[], videoInfo}`，episodes 取 `preferredLine` | 复用 `loadDetail` |
+| `GET /api/status` | 客户端 bootstrap（passwordRequired/verified/version） | 复用 tokenAllowed |
+| `GET /api/hot-list?id=` | 豆瓣五个周榜 + 百度热播剧，经 60s API（免 key），主实例失败回退官方，缓存 1h；`SIXTY_API_BASE` 可指向自部署 | 新增 `server/vod/hot-list.js` |
+| `GET /api/bangumi/calendar` | 按星期 1-7 分组，缓存 30min；**必须带可识别 UA**（默认 UA 被 bgm.tv 拒） | 新增 `server/vod/bangumi.js` |
+| `GET /api/source-list?url=` | 订阅三格式自动识别（TVBox / LibreTV-SourceList / 接口目录），fastjson 痕迹宽容解析，spider/xml/txt 跳过计入 stats | 新增 `server/vod/subscription-parser.js` |
+
+`/api/search` 与 `/api/source-list` 归入放大型限流档（HEAVY_ROUTE_RE）。测试：`scripts/test-subscription.mjs`、`scripts/test-libretv-api.mjs`（npm test 共 11 组）。实测冒烟：六端点全部通过（真实 CMS 源搜索、真实 TVBox 订阅 raw.liucn.cc/box/m.json 解析、SSRF 拒绝、detail 拍平 episodes 为 m3u8 数组）。
+
+## 四、如何验证
 
 ```bash
 npm test            # 9 组断言脚本全过（含本轮新增 5 组）
