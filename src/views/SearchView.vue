@@ -247,7 +247,7 @@ onMounted(async () => {
   } catch {
     // 接口不可用时使用默认
   }
-  if (!base.value) base.value = 'https://444.aakck.cc'
+  if (!base.value) base.value = 'https://222.9917hsck.cc'
 })
 
 onBeforeUnmount(() => {

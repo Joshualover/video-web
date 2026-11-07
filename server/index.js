@@ -16,7 +16,7 @@ import {
   tokenAllowed,
   tokenFromRequest
 } from './proxy-core.js'
-import { collectOnly, crawlAndSave, isAllowedBase, getCrawlBases } from './crawler.js'
+import { collectOnly, crawlAndSave, isAllowedBase, getCrawlBases, DEFAULT_BASE } from './crawler.js'
 import {
   getSources,
   resolveSource,
@@ -842,7 +842,7 @@ function runCrawlTask(task, job, fallbackMessage = '任务失败') {
 // 阶段一：仅搜索，返回候选列表（不抓 m3u8）
 app.post('/api/site-search', assertProxyToken, async (req, res) => {
   const wd = String(req.body?.wd || '').trim()
-  const base = String(req.body?.base || 'https://444.aakck.cc').replace(/\/+$/, '')
+  const base = String(req.body?.base || DEFAULT_BASE).replace(/\/+$/, '')
   const limit = Math.min(Math.max(Number(req.body?.limit) || 500, 1), 500)
   if (!wd || wd.length > 50) {
     return res.status(400).json({ error: '请输入 1-50 字关键词' })
@@ -879,7 +879,7 @@ app.post('/api/site-search', assertProxyToken, async (req, res) => {
 
 // 阶段二：抓取所选条目 → 生成新文件或并入目标 m3u
 app.post('/api/site-crawl', assertProxyToken, async (req, res) => {
-  const base = String(req.body?.base || 'https://444.aakck.cc').replace(/\/+$/, '')
+  const base = String(req.body?.base || DEFAULT_BASE).replace(/\/+$/, '')
   const mode = req.body?.mode === 'merge' ? 'merge' : 'new'
   const group = String(req.body?.group || '').trim().slice(0, 30)
   const target = req.body?.target ? safeDataName(String(req.body.target)) : null

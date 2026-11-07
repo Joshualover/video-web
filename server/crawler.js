@@ -16,9 +16,13 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseM3u } from '../src/lib/m3u.js'
 import { assertPublicTarget } from './proxy-core.js'
+import { proxyStatus } from './net.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DOMAIN_FILE = path.resolve(__dirname, '../data/crawl-domains.json')
+// 域名持久化文件可用 CRAWL_DOMAIN_FILE 覆盖（单元测试隔离真实 data/ 目录）
+const DOMAIN_FILE = process.env.CRAWL_DOMAIN_FILE
+  ? path.resolve(process.env.CRAWL_DOMAIN_FILE)
+  : path.resolve(__dirname, '../data/crawl-domains.json')
 
 // 单个页面脚本（evaluate）的最长耗时：Playwright 的 evaluate 不吃 timeout 参数，
 // 上游 fetch 永远不 settle 时会一直挂着，把全局任务锁占死（之后所有人的搜片都变 409）。
@@ -34,15 +38,32 @@ function withTimeout(promise, ms, message) {
   ]).finally(() => clearTimeout(timer))
 }
 
-// 内置壳域名（站点会轮换域名；发现新域名后自动加入并持久化到 data/crawl-domains.json）
-const BUILTIN_DOMAINS = ['444.aakck.cc', '678074.xyz', '678069.xyz', '678060.xyz', '678063.xyz', '678064.xyz']
+// 内置壳域名（站点会轮换域名；发现新域名后自动加入并持久化到 data/crawl-domains.json）。
+// 旧壳域名大多已变成「跳板页」（423 字节 JS 跳到新域名），仍保留在池尾部：
+// 浏览器打开它们时会自动跳到新域名，等于免费的轮换发现渠道。
+const BUILTIN_DOMAINS = [
+  '222.9917hsck.cc', // 当前真实域名（cert *.9916hsck.cc / *.9917hsck.cc）
+  '444.9916hsck.cc',
+  '444.aakck.cc',
+  '678074.xyz',
+  '678069.xyz',
+  '678060.xyz',
+  '678063.xyz',
+  '678064.xyz'
+]
 
-function isValidDomain(host) {
-  return (
-    typeof host === 'string' &&
-    /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host) &&
-    !/^\d{1,3}(\.\d{1,3}){3}$/.test(host) // 拒绝裸 IP，防 SSRF
-  )
+// 域名池条目允许带端口：站点轮换时可能落在非常规端口（如 32d247.com:8899），
+// 之前只存 hostname 会把端口丢掉，拼回 https://host 后永远连不上。
+function isValidDomain(origin) {
+  if (typeof origin !== 'string') return false
+  const m = origin.match(/^([a-z0-9-]+(\.[a-z0-9-]+)+)(?::(\d{1,5}))?$/i)
+  if (!m) return false
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(m[1])) return false // 拒绝裸 IP，防 SSRF
+  if (m[3] !== undefined) {
+    const port = Number(m[3])
+    if (port < 1 || port > 65535) return false
+  }
+  return true
 }
 
 function loadExtraDomains() {
@@ -53,6 +74,19 @@ function loadExtraDomains() {
       : []
   } catch {
     return []
+  }
+}
+
+// 从 URL 取「host[:port]」——端口必须保留：站点轮换后常落在非常规端口（如 :8899），
+// 只取 hostname 会把端口丢了，拼回 https://host 后永远 404/连不上。
+function originOf(url) {
+  try {
+    const u = new URL(url)
+    const host = u.hostname.toLowerCase()
+    if (!host) return ''
+    return u.port ? `${host}:${u.port}` : host
+  } catch {
+    return ''
   }
 }
 
@@ -77,9 +111,9 @@ const MAX_DISCOVERED_DOMAINS = Math.max(Number(process.env.CRAWL_MAX_DOMAINS) ||
 
 export async function addDiscoveredDomain(rawUrl) {
   try {
-    const u = new URL(rawUrl)
-    const host = u.hostname.toLowerCase()
-    if (!isValidDomain(host)) return null
+    // 保留端口：站点轮换后可能落在 :8899 这类非常规端口，只存 hostname 会连不上
+    const host = originOf(rawUrl)
+    if (!host || !isValidDomain(host)) return null
     if (domainPool.includes(host)) return host
     try {
       await assertPublicTarget(`https://${host}`)
@@ -210,6 +244,13 @@ async function openSearchPage(page, keyword, base, retried = false) {
     if (navError || !/^https?:\/\//.test(curUrl)) {
       const reason = navError ? String(navError.message || navError).split('\n')[0] : '页面未加载'
       console.log(`[crawler] ${candidate} 打开失败: ${reason}`)
+      // 代理挂了不是域名的锅：每个候选都会以同一个原因失败，直接快速报错并把原因说清楚
+      if (/ERR_PROXY_CONNECTION_FAILED/.test(reason)) {
+        throw new Error(`出网代理不可用（${reason}）：VOD_HTTP_PROXY 指向的代理进程没有启动或已失效。本机代理可执行 mihomo/clash 等启动；云端代理请检查订阅是否过期`)
+      }
+      if (/ERR_PROXY_CERT|ERR_TUNNEL/.test(reason)) {
+        throw new Error(`出网代理握手失败（${reason}）：VOD_HTTP_PROXY 指向的可能不是 HTTP 代理，或代理端 TLS 证书校验失败`)
+      }
       lastError = new Error(`站点 ${candidate.replace(/^https?:\/\//, '')} 无法访问（${reason}）`)
       continue
     }
@@ -230,7 +271,16 @@ async function openSearchPage(page, keyword, base, retried = false) {
     }
     return searchUrl
   }
-  const hint = '；若为连接重置/域名被墙，可给服务端设置 VOD_HTTP_PROXY 代理后重启重试'
+  // 提示分两种情况：没配代理→教用户配；配了代理还失败→多半是代理进程没起来/订阅过期
+  let hint = '；若为连接重置/域名被墙，可给服务端设置 VOD_HTTP_PROXY 代理后重启重试'
+  try {
+    const st = proxyStatus()
+    if (st?.enabled) {
+      hint = `；已配置出网代理（${st.url}）仍失败：确认代理进程在跑、订阅/节点可用（curl -x ${st.url} https://www.google.com 自检），或临时清掉 VOD_HTTP_PROXY 试直连`
+    }
+  } catch {
+    /* 拿不到状态就用默认提示 */
+  }
   throw new Error(`${lastError?.message || '所有站点域名均无法访问，请稍后重试'}${hint}`)
 }
 
