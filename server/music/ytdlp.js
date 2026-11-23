@@ -18,7 +18,7 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { proxyStatus } from '../net.js'
+import { proxyForTools } from '../net.js'
 
 export const kind = 'ytdlp'
 // slow：一次调用要起进程 + 访问 YouTube，实测搜索 6-15 秒、取流 5-10 秒。
@@ -197,10 +197,12 @@ export async function resolveBinary() {
   throw new Error(binaryCache.error)
 }
 
-// 有代理就交给 yt-dlp（它自己会走 --proxy），否则它用直连
+// 有代理就交给 yt-dlp（它自己会走 --proxy），否则它用直连。
+// 必须用 proxyForTools()：那是带认证的完整地址，用展示用的 proxyStatus().url
+// 会在需要认证的代理上被拒（407），表现为「yt-dlp 明明能跑却取不到流」。
 function commonArgs() {
   const args = ['--no-warnings', '--no-playlist', '--socket-timeout', '15', '--retries', '1']
-  const proxy = proxyStatus()
+  const proxy = proxyForTools()
   if (proxy.enabled && proxy.url) args.push('--proxy', proxy.url)
   return args
 }

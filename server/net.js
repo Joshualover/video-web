@@ -253,11 +253,16 @@ export function agentFor(rawUrl, { force } = {}) {
 }
 
 // 供接口/界面展示当前代理状态
+//
+// **只返回脱敏信息**：这个结果会直接进 API 响应（/api/music/sources、/api/vod/sources），
+// 所以绝对不能带账号密码。需要凭据的外部工具请用 proxyForTools()。
 export function proxyStatus() {
   const configured = parseConfig()
   const direct = [...directHosts]
   const hints = [...routeHints.entries()].map(([host, route]) => `${host}:${route}`)
-  if (!configured) return { enabled: false, url: '', noProxy: bypass, directHosts: direct, routeHints: hints }
+  if (!configured) {
+    return { enabled: false, url: '', noProxy: bypass, directHosts: direct, routeHints: hints }
+  }
   return {
     enabled: true,
     url: `${configured.protocol}//${configured.host}`,
@@ -265,4 +270,18 @@ export function proxyStatus() {
     directHosts: direct,
     routeHints: hints
   }
+}
+
+// 供子进程（yt-dlp）使用：带认证的完整代理地址。
+// 与 proxyStatus() 分开是为了让「会下发给前端」和「含密码」这两件事不会混淆 ——
+// 之前 yt-dlp 拿的是脱敏地址，需要认证的代理会直接 407。
+export function proxyForTools() {
+  const configured = parseConfig()
+  if (!configured) return { enabled: false, url: '' }
+  let url = `${configured.protocol}//${configured.host}`
+  if (configured.username || configured.password) {
+    // URL 里的账号密码已编码，原样拼回即可
+    url = `${configured.protocol}//${configured.username}:${configured.password}@${configured.host}`
+  }
+  return { enabled: true, url }
 }

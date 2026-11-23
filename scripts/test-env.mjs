@@ -37,4 +37,52 @@ assert.equal(target.KEEP, 'from-shell')
 assert.equal(target.ADDED, 'from-file')
 assert.equal(target.EMPTY, '')
 
+// ─── 出网代理的凭据边界（回归：曾把带密码的地址下发给前端） ────────────────
+// net.js 在模块顶层读一次环境变量，所以这里用子进程跑，才能换环境反复验证。
+import { execFileSync } from 'node:child_process'
+// net.js 在模块顶层会往 stdout 打「[net] 出网代理已启用…」，所以只取最后一个 JSON 行
+const probe = (env, expr) => {
+  const stdout = execFileSync(process.execPath, ['--input-type=module', '-e', expr], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env }
+  })
+  const line = stdout
+    .split('\n')
+    .map((item) => item.trim())
+    .filter((item) => item.startsWith('{'))
+    .pop()
+  if (!line) throw new Error(`探测脚本没有输出 JSON：${stdout.slice(0, 200)}`)
+  return line
+}
+
+const CRED_EXPR = `
+  const { proxyStatus, proxyForTools } = await import(${JSON.stringify(
+    fileURLToPath(new URL('../server/net.js', import.meta.url))
+  )});
+  console.log(JSON.stringify({ status: proxyStatus(), tools: proxyForTools() }));
+`
+
+// 带认证：展示用必须脱敏，子进程用必须带凭据
+const withAuth = JSON.parse(
+  probe({ VOD_HTTP_PROXY: 'http://user:p%40ss@127.0.0.1:7890' }, CRED_EXPR)
+)
+assert.equal(withAuth.status.url, 'http://127.0.0.1:7890', '下发给前端的代理地址不能带账号密码')
+assert.ok(!JSON.stringify(withAuth.status).includes('p%40ss'), '接口响应不得包含代理密码')
+assert.ok(!('urlForTools' in withAuth.status), '带凭据的字段不应混进展示结构')
+assert.equal(withAuth.tools.url, 'http://user:p%40ss@127.0.0.1:7890', 'yt-dlp 需要带凭据的地址')
+
+// 无认证：两者一致
+const noAuth = JSON.parse(probe({ VOD_HTTP_PROXY: 'http://127.0.0.1:7890' }, CRED_EXPR))
+assert.equal(noAuth.status.url, 'http://127.0.0.1:7890')
+assert.equal(noAuth.tools.url, 'http://127.0.0.1:7890')
+
+// 未配置：都为空，且不应误报可用
+const none = JSON.parse(probe({ VOD_HTTP_PROXY: '' }, CRED_EXPR))
+assert.equal(none.status.enabled, false)
+assert.equal(none.tools.enabled, false)
+
+// 不支持的协议要被忽略，而不是静默当成直连却以为配好了
+const socks = JSON.parse(probe({ VOD_HTTP_PROXY: 'socks5://127.0.0.1:1080' }, CRED_EXPR))
+assert.equal(socks.status.enabled, false, '只支持 http/https 代理，socks5 应被忽略')
+
 console.log('env tests passed')
