@@ -31,7 +31,7 @@
 - **源健康检测**：一键检测各源可用性，自动切到可用源，源缓存 6 小时
 - **配置定时自动刷新**：默认每 6 小时重新抓取配置并做健康检测（`VOD_AUTO_REFRESH_HOURS=0` 可关闭）
 - **源级启停**：源管理页列出解析出的每个源，可单独**启用/停用**（停用的源不参与聚合搜索与选路）、可单源测速；偏好存 `data/vod-source-prefs.json`，与配置地址无关，重新抓取配置也不丢
-- **出网代理**：设置 `VOD_HTTP_PROXY` 后，抓取配置/CMS 接口/播放代理都走代理，源站被墙时也能用（回环与内网地址自动直连；`VOD_NO_PROXY` 可追加直连域名；`VOD_DIRECT_HOSTS` 可强制某些域名直连）
+- **出网代理**：设置 `VOD_HTTP_PROXY` 后，抓取配置/CMS 接口/播放代理都走代理，源站被墙时也能用（回环与内网地址自动直连；`VOD_NO_PROXY` 可追加直连域名；`VOD_DIRECT_HOSTS` 可强制某些域名直连）。**只支持 http/https 代理（不支持 socks5）**；Docker 里 `127.0.0.1` 指容器自己而非宿主机。完整配法、Docker 写法与自查表见 [docs/deploy-env-checklist.md](docs/deploy-env-checklist.md)
 - **媒体路由自适应**：有的 CDN 必须直连（代理 IP 会被拒），有的偏偏只能走代理。HLS 代理取上游失败时会自动换另一条路由重试，并把成功的路由记住（启动日志/源管理页可见），不用手工维护名单
 - **豆瓣热门榜单**（参考 MoonTV / LunaTV 的发现页）：电影 / 剧集 / 综艺 × 分类（热门·最新·豆瓣高分·冷门佳片 / 地区·类型）× 分页，卡片带评分；点封面会自动用「片名＋年份」跨源找片并进详情，找不到会提示换源
 - **全源聚合搜索 + 同片多源合并**：默认并发搜所有可用源（`VOD_SEARCH_SOURCES` 可调，默认 30），每个源最多取 8 条避免一个「什么都搜得到」的源占满结果；同名同年的片合并成一张卡并显示「N 个源」
@@ -436,6 +436,7 @@ scripts/e2e-music.mjs          音乐源端到端测试（API 层，自己拉实
 scripts/e2e-hls-range.mjs      播放代理 Range 兜底端到端测试（起一台「只认有界 Range」的假 CDN）
 docs/code-review-2026-10.md    本轮安全加固与修复记录（问题清单 / 环境变量速查 / 上线检查清单）
 docs/music-sources.md          音乐源模型 / 内置音源 / 出网代理 / 环境变量 / 接口 / 排障
+docs/deploy-env-checklist.md   部署环境变量检查清单（重点：VOD_HTTP_PROXY 的配法、Docker 坑、上线自查表）
 ```
 
 > e2e 脚本会自动探测本机 Edge/Chrome（也可用 `EDGE_PATH` / `CHROME_PATH` 指定）；
