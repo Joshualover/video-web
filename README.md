@@ -67,8 +67,19 @@ Spotube 把「曲目元数据」和「音频来源」拆成两个可插拔角色
 `supportedPresets` / `matches(track)` / `streams(match)` 三件事；本项目把后两件落成
 `/api/music/match` 与 `/api/music/stream`，只是省掉了 Spotify 那一步（搜索直接打在音源上，**不需要任何密钥**）。
 
-- **内置音源**（五种，见 [docs/music-sources.md](docs/music-sources.md)）：
-  - **yt-dlp**（推荐）：走服务端本机的 `yt-dlp` 可执行文件，对应 Spotube 的
+播放器 UI 与音源解析链参考了 [AlgerMusicPlayer](https://github.com/algerkong/AlgerMusicPlayer)：
+那边同样把音源抽象成一组 Provider，由「注册表 + 解析链」统一调度；本项目按 Web/Node 场景裁剪后，
+把它的 **GD音乐台** 聚合源与「大封面 + 滚动歌词」播放页一并移植过来（见下文）。
+
+- **内置音源**（六种，见 [docs/music-sources.md](docs/music-sources.md)）：
+  - **GD音乐台**（推荐，对齐 AlgerMusicPlayer）：一条聚合解析口 `music-api.gdstudio.xyz`，
+    背后再聚合网易云 / JOOX 等平台，**免鉴权、无需登录 cookie**。搜索、取流、歌词、封面四件都有，
+    可取 **320 kbps MP3 与无损 FLAC**。分两个平台实例注册：
+    - `GD音乐台 · 网易云` —— 主音源，搜索/取流/歌词全通，**国内网络配 `VOD_HTTP_PROXY` 后可稳定取到 320k 与无损**
+    - `GD音乐台 · JOOX` —— 搜索常有网易云没有的原唱，但上游取流实测返回空，只当「换源匹配」的候选
+    > 上游对同一首歌的不同音质会**偶发 503**。适配器因此做了「短暂退避重试 + 音质降级」：
+    > 某档失败先重试一次，仍失败就退到相邻音质，不直接让播放失败（实测 9/9 稳定取流）
+  - **yt-dlp**（推荐，YouTube）：走服务端本机的 `yt-dlp` 可执行文件，对应 Spotube 的
     `YoutubeClientEngine.ytDlp`。桌面端那套 Dart/Kotlin 内核（youtubeExplode / newPipe）
     在 Web 侧没有等价物，yt-dlp 是子进程方案、Node 直接可用，也最跟得上 YouTube 的反爬变化。
     **装了就参与搜索，没装则检测失败自动排除**，不拖慢没装它的机器。
@@ -80,6 +91,7 @@ Spotube 把「曲目元数据」和「音频来源」拆成两个可插拔角色
   - **Apple 试听**：兜底音源（不在 Spotube 里），iTunes 30 秒片段，没配代理时也能出声，界面上标「试听」
 - **取流要代理**：YouTube 的媒体域（googlevideo）在国内被 DNS 污染，取流需要给服务端配
   `VOD_HTTP_PROXY`（yt-dlp 会自动带上）；JioSaavn 与 Apple 试听可直连。
+  **GD音乐台同样建议配代理**：直连会 `ECONNRESET`，走代理才稳定。
   **另外要用较新的 yt-dlp**：实测旧版（2025.10）拿到的直链会被 YouTube 限流成「只给前 1MiB」，
   表现为播一小段就停；新版（2026.08）正常整首播完。适配器会自动选用版本最高的那份可执行文件，
   详见 [docs/music-sources.md](docs/music-sources.md)
@@ -92,15 +104,22 @@ Spotube 把「曲目元数据」和「音频来源」拆成两个可插拔角色
   并更新健康状态）、硬截止 15 秒。没配代理时一批实例都在等超时，没有软截止搜索框要转很久。
   目标里有慢音源（yt-dlp）时软截止不生效 —— 直接调接口的人应当拿到完整结果，
   而不是被静默丢掉一部分
-- **按分组轮流取源**：内置 6 个 YouTube 实例，若不轮流取，它们会把搜索名额吃光，
-  JioSaavn 与 Apple 试听永远轮不到
+- **按分组轮流取源**：内置多个 YouTube 实例，若不轮流取，它们会把搜索名额吃光，
+  GD音乐台、JioSaavn 与 Apple 试听永远轮不到
 - **音源健康检测 + 排序**：启动异步预热，可用源优先；主动检测失败退避 30 分钟，
   搜索/取流途中的偶发失败只退避 2 分钟（一次超时不代表源坏了）；音源管理页可逐个「测试」
 - **音源级启停 / 自定义实例**：偏好存 `data/music-source-prefs.json`；自定义 Piped / Invidious 实例存
   `data/music-sources.json`，新增时先过出网校验（防 SSRF），只允许删自己加的
 - **换源播放**：只知道曲名/艺术家时（收藏、历史恢复），逐源找最像的一首并直接返回可播流
-- **播放器**：原生 `<audio>`，播放队列、上一首/下一首、进度拖拽、音量、记忆音量；封面走 `/api/music/image`，
-  音频走 `/api/music/proxy`（Range 透传，m3u8 会被重写）
+- **播放器**（对齐 AlgerMusicPlayer 的播放页）：
+  - **封面 / 歌词两种视图**：默认大封面，点封面切到滚动歌词（当前行高亮并自动居中，点歌词行可跳转进度）
+  - **播放模式**：列表循环 → 单曲循环 → 随机播放，点一下轮转一档，偏好跨会话记忆
+  - **音质切换**：标准 128k / 较高 320k / 无损 FLAC，档位由服务端下发；切档会重新取流。
+    曲目命中无损时标题旁标「无损」
+  - 原生 `<audio>`，播放队列、上一首/下一首、进度拖拽、音量、记忆音量；
+    封面走 `/api/music/image`，音频走 `/api/music/proxy`（Range 透传，m3u8 会被重写）
+- **歌词**：`GET /api/music/lyric` 取回标准 LRC，前端 `src/lib/lyric.js` 解析
+  （支持一行多时间标签、`[ar:]` 元信息、毫秒/百分秒），按播放进度二分定位当前行
 - **收藏 / 历史**：本地保存，可点击直接播放
 
 环境变量：
@@ -113,11 +132,13 @@ MUSIC_SEARCH_SOURCES=6            # 一次聚合搜索最多并搜几个音源�
 MUSIC_SEARCH_DEADLINE=15000       # 硬截止（毫秒）
 MUSIC_SEARCH_SOFT_DEADLINE=3500   # 软截止（毫秒，已拿到结果就先返回）
 MUSIC_MATCH_SOURCES=4             # 换源播放最多依次试几个音源
+MUSIC_QUALITY=320                 # 默认音质档位（128 / 320 / 740=无损）
 MUSIC_WARMUP=1                    # 启动后异步检测一遍音源，0 关闭
 ```
 
-> 音频来自第三方公开接口（yt-dlp 拉取的 YouTube / JioSaavn / iTunes），本项目不存储、不转码、不传播内容；
-> Piped / Invidious 实例均非本项目所有，可用性由对方决定。仅供本地学习使用。
+> 音频来自第三方公开接口（GD音乐台 / yt-dlp 拉取的 YouTube / JioSaavn / iTunes），
+> 本项目不存储、不转码、不传播内容；GD音乐台与 Piped / Invidious 实例均非本项目所有，
+> 可用性由对方决定。仅供本地学习使用。
 
 ### 其他
 - 登录保护：默认账号 `admin` / 密码 `admin123`（设置页可修改、退出）。**注意这只是本地 UI 门槛**：口令与登录态都只存在浏览器 localStorage，服务端不校验它，不能当作访问控制

@@ -16,11 +16,55 @@ Spotube 把「曲目元数据」与「音频来源」拆成两个可插拔的角
 
 | kind | 名称 | 取流方式 | 国内可直连 |
 | --- | --- | --- | --- |
+| `gdmusic` | GD音乐台 | 聚合解析口 `music-api.gdstudio.xyz/api.php`，`types=search/url/lyric/pic` 四件套 | 需出网代理（直连会 ECONNRESET） |
 | `ytdlp` | yt-dlp | 服务端本机的 `yt-dlp` 可执行文件（Spotube 的 YouTube Engine 之一） | 搜索常可，取流需代理 |
 | `piped` | Piped | YouTube 音频，`/search?filter=music_songs` + `/streams/<id>?local=true` | 需要出网代理 |
 | `invidious` | Invidious | YouTube 音频，`/api/v1/search` + `/api/v1/videos/<id>?local=true` | 需要出网代理 |
 | `jiosaavn` | JioSaavn | 官方 `api.php?__call=search.getResults`，播放地址 DES 解密后直连 `aac.saavncdn.com` | 可直连 |
 | `itunes` | Apple 试听 | iTunes Search API 的 30 秒试听片段 | 可直连 |
+
+### GD音乐台（对齐 AlgerMusicPlayer）
+
+参考项目 [AlgerMusicPlayer](https://github.com/algerkong/AlgerMusicPlayer) 的音源模型：
+它把内置源（网易云官方 / GD音乐台 / unblock 平台 / 自定义 API）与导入插件统一成
+`MusicSourceProvider`，由 `registry` 出列表、`resolver` 按顺序逐 provider 解析，
+单个 provider 有 15s 预算、整条链 30s 预算，失败进缓存跳过，命中后还要验一次 URL 真能播。
+
+本项目只取「免鉴权、能直连出结果」的那一段，落成 `server/music/gdmusic.js`：
+
+| GD音乐台接口 | 用途 |
+| --- | --- |
+| `types=search&source=<平台>&name=<关键词>&count=<1-99>` | 搜索，返回 id / name / artist / album / pic_id / url_id |
+| `types=url&source=<平台>&id=<url_id>&br=<128|320|740>` | 取流，`br=740` 返回 **FLAC 无损** |
+| `types=lyric&source=<平台>&id=<url_id>` | 歌词，返回标准 LRC（`lyric` / `tlyric`） |
+| `types=pic&id=<pic_id>&size=<300>` | 封面（搜索只给 pic_id，要单独换地址） |
+
+**平台实例**：同一个入口下按 `platform` 参数区分子平台，注册成独立音源 id，
+这样它们能各自参与「按分组轮流取源」，也能在音源管理页单独启停。
+
+- `gdmusic:netease`（GD音乐台 · 网易云）：搜索 / 取流 / 歌词全通，主音源
+- `gdmusic:joox`（GD音乐台 · JOOX）：搜索常有网易云已下架的原唱，但**上游取流实测返回空 url**
+  （接口仍回 200，`url` 空串、`br=-1`），只当作「换源匹配」的候选
+- `tidal` 不登记：上游直接回 `400 {"detail":"Value of source is not supported"}`
+
+**四个必须处理的实测坑**：
+
+1. **取流会偶发 503**。同一首歌不同音质随机 503，隔几秒重试又能成功。
+   适配器做了「退避 600ms 重试一次 + 音质降级（740→320→128）」，
+   实测连续 9 次取流 9/9 成功。
+2. **取不到流时接口仍回 200**，只有 `url` 为空串、`br=-1`。不能只看状态码，必须显式判空。
+3. **`count` 上限 99**，超过回 422（FastAPI 校验）。
+4. **joox 的 id 是 base64 风格字符串**（含 `+` / `=`），必须整串 URL 编码后传回。
+
+**封面不能阻塞搜索**：上游搜索本身要 2-3 秒，若再串行等 10 个封面（6-7 秒），
+会把这次搜索拖过聚合搜索的软截止（3.5s）而被整条丢掉 —— 表现为「GD 结果时有时无」。
+现在的做法是搜索阶段**不补封面**，另由后台以低并发（2）预热封面缓存（按 `platform:pic_id` 存，
+成功缓存 1 小时、失败 5 分钟），下次搜同一个词直接命中；播放时的取流响应也会顺手带回封面。
+并发故意压到 2：并发 6 时会和用户下一次搜索抢同一条出网连接，实测把后续搜索从 4s 拖到 10s+。
+
+**时长**：搜索接口不返回时长。不去为每首歌多打一次取流请求（50 条 = 50 个额外请求，会被风控），
+而是用 `types=url` 返回的 `size` 与 `br` 估算（`bytes * 8 / (kbps * 1000)`，实测与真实时长一致），
+再由前端在播放后把解码出的 `audio.duration` 回填到列表项。
 
 **YouTube 音频有三条通路，优先用 yt-dlp。** 桌面端 Spotube 也是这么做的：
 它的 `YoutubeClientEngine` 有 `youtubeExplode` / `newPipe` / `ytDlp` 三种，
@@ -214,19 +258,27 @@ Piped / Invidious 的公开实例可用性波动很大（下线、被 YouTube �
 | POST | `/api/music/sources/:id/check` | 单源健康检测 |
 | DELETE | `/api/music/sources/:id` | 删除自定义实例 |
 | GET | `/api/music/search` | `?wd=&source=&limit=&perSource=&slow=` 聚合搜索；`slow=exclude` 只要快源、`slow=only` 只要慢源、缺省搜全部 |
-| GET | `/api/music/stream` | `?source=&id=` 解析可播放流 |
-| GET | `/api/music/match` | `?title=&artists=&duration=` 换源匹配（对应 Spotube 的 matches） |
+| GET | `/api/music/stream` | `?source=&id=&platform=&quality=&name=&pic=&picId=&duration=` 解析可播放流（`platform` 用于聚合音源定位子平台；`quality` 取 128/320/740；其余字段用于把曲目元信息带回来） |
+| GET | `/api/music/lyric` | `?source=&id=&platform=` 取歌词，返回 `{ lyric, tlyric }`（标准 LRC；没有歌词时返回空串而不是报错） |
+| GET | `/api/music/match` | `?title=&artists=&duration=&quality=` 换源匹配（对应 Spotube 的 matches） |
 | GET | `/api/music/image` | `?url=` 封面代理 |
 | GET | `/api/music/proxy` | `?url=` 音频透传（支持 Range；m3u8 会被重写） |
 
 `/api/music/search` 的响应里，`results[].key` 是 `<音源 id>:<曲目 id>`，
 `errors[]` 逐个列出失败音源与原因，`searched[]` 是本次实际参与的音源。
 
+`/api/music/sources` 的 `meta` 里额外下发 `qualities[]`（音质档位）与 `defaultQuality`，
+前端不写死 kbps 数值，换音源时只改服务端。
+
 ## 排障
 
 | 现象 | 原因与处理 |
 | --- | --- |
 | 搜索能出结果但只有「Apple 试听」 | YouTube 系音源不可达：给服务端配 `VOD_HTTP_PROXY`，再到音源管理页「测试」确认 |
+| GD音乐台报 `ECONNRESET` / 搜索无结果 | 直连被重置：给服务端配 `VOD_HTTP_PROXY`（实测直连必失败，走代理才稳） |
+| GD音乐台取流偶发 `HTTP 503` | 上游对新请求限流。适配器会退避重试一次并降一级音质，通常自动恢复；持续报错说明上游整体不可用，换个音源 |
+| GD音乐台的 JOOX 能搜到但点播放失败 | 上游该平台取流返回空（`url` 空、`br=-1`），是对方限制，不是本项目的 bug；换网易云平台的那条 |
+| GD音乐台结果条数时多时少 | 上游搜索本身在 2-3 秒浮动，聚合搜索有软截止；后台会预热封面缓存，再搜一次通常就齐 |
 | 音源管理里 yt-dlp 显示「未安装」 | 服务端那台机器上没有 yt-dlp；装完点一次「测试」即可（见上文） |
 | yt-dlp 报 `The page needs to be reloaded` | 该 player client 被 YouTube 挡了，调 `YTDLP_PLAYER_CLIENTS` 换一组 |
 | yt-dlp 报 `HTTP Error 403` | 拿到了地址但媒体域不可达（国内直连 googlevideo 的典型表现）：配 `VOD_HTTP_PROXY` |

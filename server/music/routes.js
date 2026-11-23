@@ -20,7 +20,8 @@ import {
   addableKinds,
   slowKinds
 } from './sources.js'
-import { matchTrack, resolveStreams, searchAll } from './query.js'
+import { matchTrack, resolveStreams, resolveLyric, searchAll } from './query.js'
+import { QUALITY_LEVELS, normalizeQuality } from './gdmusic.js'
 
 const router = express.Router()
 
@@ -65,7 +66,10 @@ router.get('/sources', async (req, res) => {
         proxy: proxyStatus(),
         addableKinds: addableKinds(),
         slowKinds: slowKinds(),
-        searchSources: SEARCH_SOURCES
+        searchSources: SEARCH_SOURCES,
+        // 音质档位由服务端下发：前端不写死 kbps 数值，换音源时只改这里
+        qualities: QUALITY_LEVELS.map((item) => ({ value: item.value, label: item.label })),
+        defaultQuality: normalizeQuality(process.env.MUSIC_QUALITY)
       }
     })
   } catch (err) {
@@ -168,8 +172,28 @@ router.get('/stream', async (req, res) => {
   if (!source) return res.status(404).json({ error: '音源不存在' })
   const id = String(req.query.id || '').trim()
   if (!id) return res.status(400).json({ error: '缺少曲目 id' })
+  // 聚合型音源要用搜索结果里带回来的平台取流，否则会取到别的平台的同名歌
+  const platform = String(req.query.platform || '').trim()
+  const quality = normalizeQuality(req.query.quality || process.env.MUSIC_QUALITY)
+  // 曲名/封面/时长由前端回传：取流接口本身不返回这些，
+  // 不带上就会在「换音质重取一次流」之后把队列里的曲目信息冲成空
+  const incoming = {
+    platform,
+    name: String(req.query.name || '').trim(),
+    pic: String(req.query.pic || '').trim(),
+    picId: String(req.query.picId || req.query.pic_id || '').trim(),
+    duration: Number(req.query.duration) || 0
+  }
   try {
-    const data = await resolveStreams(source, id)
+    const data = await resolveStreams(source, id, incoming, quality)
+    // 适配器没给出封面时，用 pic_id 单独换一次图片地址
+    let pic = data.pic || incoming.pic
+    const picId = incoming.picId || data.picId
+    if (!pic && picId && typeof adapterFor(source.kind)?.fetchPic === 'function') {
+      pic = await adapterFor(source.kind)
+        .fetchPic(source.api, { id: picId, platform })
+        .catch(() => '')
+    }
     res.json({
       track: {
         key: `${source.id}:${id}`,
@@ -177,18 +201,36 @@ router.get('/stream', async (req, res) => {
         source: source.id,
         sourceName: source.name,
         kind: source.kind,
-        name: data.title || '',
+        platform,
+        name: data.title || incoming.name || '',
         artists: [],
         album: '',
-        duration: data.duration || 0,
-        pic: data.pic || '',
+        duration: data.duration || incoming.duration || 0,
+        pic: pic || '',
         externalUri: '',
         preview: Boolean(data.preview)
       },
+      quality,
       streams: withPlayUrl(data.streams, req)
     })
   } catch (err) {
     musicError(res, err, '解析播放地址失败')
+  }
+})
+
+// 取歌词：目前只有 GD音乐台这类聚合音源声明了 lyric 能力
+router.get('/lyric', async (req, res) => {
+  const source = await resolveSource(String(req.query.source || ''))
+  if (!source) return res.status(404).json({ error: '音源不存在' })
+  const id = String(req.query.id || '').trim()
+  if (!id) return res.status(400).json({ error: '缺少曲目 id' })
+  const platform = String(req.query.platform || '').trim()
+  try {
+    const lyric = await resolveLyric(source, id, { platform })
+    // 没有歌词不是错误：前端据此显示「暂无歌词」
+    res.json({ ok: true, lyric: lyric?.lyric || '', tlyric: lyric?.tlyric || '' })
+  } catch (err) {
+    musicError(res, err, '获取歌词失败')
   }
 })
 
@@ -214,7 +256,8 @@ router.get('/match', async (req, res) => {
       ...ranked.filter((item) => adapterFor(item.kind)?.capabilities?.slow)
     ]
     if (!targets.length) return res.status(400).json({ error: '没有可用的音乐源' })
-    const result = await matchTrack({ title, artists, duration, sources: targets })
+    const quality = normalizeQuality(req.query.quality || process.env.MUSIC_QUALITY)
+    const result = await matchTrack({ title, artists, duration, sources: targets, quality })
     res.json({ ...result, streams: result.matched ? withPlayUrl(result.streams, req) : [] })
   } catch (err) {
     musicError(res, err, '匹配音源失败')

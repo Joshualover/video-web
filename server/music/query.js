@@ -14,11 +14,16 @@ export function publicTrack(track, source) {
     source: source.id,
     sourceName: source.name,
     kind: source.kind,
+    // 聚合型音源（GD音乐台）同一条结果可能来自不同平台（netease / joox），
+    // 取流与取词必须回到同一个平台，否则会取到别的歌或直接失败
+    platform: String(track.platform || source.platform || ''),
     name: track.name || '',
     artists: Array.isArray(track.artists) ? track.artists : [],
     album: track.album || '',
     duration: Number(track.duration) || 0,
     pic: track.pic || '',
+    // 只有 pic_id 没有地址的音源（GD音乐台）把 id 带下去，取流时再换图片地址
+    picId: String(track.picId || ''),
     externalUri: track.externalUri || '',
     preview: Boolean(track.preview)
   }
@@ -41,16 +46,24 @@ function slimTrack(track) {
 export async function searchSource(source, wd, limit) {
   const adapter = adapterFor(source.kind)
   if (!adapter || !adapter.capabilities.search) throw new Error('该音源不支持搜索')
-  const list = await adapter.fetchSearch(source.api, { wd, limit })
+  // platform 是聚合型音源（GD音乐台）的子通路，普通音源忽略即可
+  const list = await adapter.fetchSearch(source.api, { wd, limit, platform: source.platform })
   // 不传 latency：保留检测测出的真实延迟，别让一次搜索把它冲成 0
   markHealth(source.id, true)
   return list
 }
 
-export async function resolveStreams(source, id, track) {
+export async function resolveStreams(source, id, track, quality) {
   const adapter = adapterFor(source.kind)
   if (!adapter) throw new Error('未知音源类型')
-  return adapter.fetchStreams(source.api, { id, track })
+  return adapter.fetchStreams(source.api, { id, track, quality })
+}
+
+// 取歌词：只有声明了 lyric 能力的音源才有
+export async function resolveLyric(source, id, track) {
+  const adapter = adapterFor(source.kind)
+  if (!adapter?.capabilities?.lyric) throw new Error('该音源不支持歌词')
+  return adapter.fetchLyric(source.api, { id, track })
 }
 
 // 并发搜多个源，按源轮流交错，避免某一条通路把结果名单占满。
@@ -150,7 +163,14 @@ export function scoreMatch(track, { title, artists = [], duration = 0 }) {
 }
 
 // 依次到各音源里找「最像」的那一首并取流 —— 对应 Spotube 的 matches() + streams()
-export async function matchTrack({ title, artists = [], duration = 0, sources, deadline = 9000 }) {
+export async function matchTrack({
+  title,
+  artists = [],
+  duration = 0,
+  sources,
+  quality,
+  deadline = 9000
+}) {
   const tried = []
   for (const source of sources) {
     try {
@@ -164,7 +184,7 @@ export async function matchTrack({ title, artists = [], duration = 0, sources, d
         continue
       }
       const best = ranked[0]
-      const data = await resolveStreams(source, best.track.id, best.track)
+      const data = await resolveStreams(source, best.track.id, best.track, quality)
       markHealth(source.id, true)
       return {
         matched: true,

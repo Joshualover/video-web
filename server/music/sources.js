@@ -19,6 +19,7 @@ import * as invidious from './invidious.js'
 import * as jiosaavn from './jiosaavn.js'
 import * as itunes from './itunes.js'
 import * as ytdlp from './ytdlp.js'
+import * as gdmusic from './gdmusic.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.resolve(__dirname, '../../data')
@@ -26,7 +27,7 @@ const CUSTOM_FILE = path.join(DATA_DIR, 'music-sources.json')
 const PREFS_FILE = path.join(DATA_DIR, 'music-source-prefs.json')
 const DEFAULTS_FILE = path.join(__dirname, 'default-sources.json')
 
-const ADAPTERS = { piped, invidious, jiosaavn, itunes, ytdlp }
+const ADAPTERS = { piped, invidious, jiosaavn, itunes, ytdlp, gdmusic }
 // 只有「实例型」音源允许用户自己加地址；jiosaavn / itunes 是固定官方接口，
 // ytdlp 是服务端本机可执行文件（地址由 YTDLP_PATH 决定），都不该出现在「新增」里
 const ADDABLE_KINDS = ['piped', 'invidious']
@@ -62,8 +63,23 @@ const KIND_INFO = {
     label: 'yt-dlp',
     group: 'YouTube',
     desc: 'YouTube 音频，走服务端本机的 yt-dlp 可执行文件（Spotube 的 YouTube Engine 之一）'
+  },
+  gdmusic: {
+    label: 'GD音乐台',
+    group: 'GD音乐台',
+    desc: '对齐 AlgerMusicPlayer 的聚合音源：一个入口聚合网易云 / JOOX 等平台，免鉴权，可取 320 kbps 与无损 FLAC'
   }
 }
+
+// GD音乐台的子平台清单由 default-sources.json 驱动（每条带 platform 字段），
+// 不在这里再维护一份列表 —— 两处并存容易出现「加了平台但没注册」的不一致。
+// 注册时会按 platform 拼出独立 id（见 sourceId），因此两个平台能各自启停、各自参与搜索。
+//
+// 实测平台取舍：
+//   netease —— 搜索/取流/歌词全通，可取 320 kbps 与无损 FLAC（主音源）
+//   joox    —— 搜索可用（常有网易云没有的原唱），但取流实测返回空 url，
+//              所以它只当「换源匹配」的候选，不作首选
+//   tidal   —— 上游直接回 400（Value of `source` is not supported），不登记
 
 export function adapterFor(kind) {
   return ADAPTERS[String(kind || '')] || null
@@ -83,15 +99,17 @@ export function slowKinds() {
   return Object.keys(ADAPTERS).filter((kind) => ADAPTERS[kind]?.capabilities?.slow)
 }
 
-// 源 id 取「kind:host」：稳定、可读，且换路径不会影响已存的启停偏好
-export function sourceId(kind, api) {
+// 源 id 取「kind:host」：稳定、可读，且换路径不会影响已存的启停偏好。
+// 聚合型音源（GD音乐台）同一 host 下有多个平台，再拼上 platform 才唯一。
+export function sourceId(kind, api, platform = '') {
   let host = String(api || '')
   try {
     host = new URL(api).hostname.toLowerCase()
   } catch {
     // 地址非法时退化成原文，交由校验环节报错
   }
-  return `${kind}:${host}`
+  const suffix = platform ? `:${String(platform).toLowerCase()}` : ''
+  return `${kind}:${host}${suffix}`
 }
 
 function normalizeApi(raw) {
@@ -144,11 +162,13 @@ async function loadDefaults() {
       // local 型音源（yt-dlp）跑在本机，没有实例地址，用伪协议占位
       const api = item?.local ? String(item.api || `${kind}://local`) : normalizeApi(item?.api)
       if (!api) return null
+      const platform = String(item?.platform || '').trim()
       return {
-        id: item?.id ? String(item.id) : sourceId(kind, api),
+        id: item?.id ? String(item.id) : sourceId(kind, api, platform),
         kind,
         name: cleanName(item?.name, api),
         api,
+        ...(platform ? { platform } : {}),
         group: String(item?.group || '').trim() || kindInfo(kind).group,
         from: '内置',
         builtin: true,

@@ -40,7 +40,16 @@ export const musicApi = {
       limit: opts.limit || 40,
       slow: opts.slow
     }),
-  stream: (source, id) => apiGet('/api/music/stream', { source, id }),
+  // platform / quality 只在聚合型音源（GD音乐台）与有音质档位的音源上有意义
+  stream: (source, id, opts = {}) =>
+    apiGet('/api/music/stream', {
+      source,
+      id,
+      platform: opts.platform,
+      quality: opts.quality
+    }),
+  lyric: (source, id, opts = {}) =>
+    apiGet('/api/music/lyric', { source, id, platform: opts.platform }),
   // 等价 Spotube 的 matches()：本音源拿不到播放地址时，用「曲名 + 艺术家 + 时长」去别的音源找
   match: (params) => apiGet('/api/music/match', params)
 }
